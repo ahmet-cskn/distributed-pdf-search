@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pdfsearch</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #1f2328;
+      --muted: #656d76;
+      --border: #d0d7de;
+      --accent: #0969da;
+      --error: #cf222e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #8d96a0;
+        --border: #30363d;
+        --accent: #4493f8;
+        --error: #f85149;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 16px; }
+    h1 { margin: 0 0 4px; font-size: 28px; }
+    #status { margin: 0 0 24px; color: var(--muted); font-size: 14px; }
+    form { display: flex; gap: 8px; }
+    input, button {
+      font: inherit;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    input { flex: 1; min-width: 0; }
+    button { background: var(--accent); border-color: var(--accent); color: #fff; cursor: pointer; }
+    #summary { margin: 24px 0 8px; color: var(--muted); }
+    #summary.error { color: var(--error); }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { padding: 10px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+    .file { font-weight: 600; }
+    .pages { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>pdfsearch</h1>
+    <p id="status">Loading status…</p>
+
+    <form id="search-form">
+      <input id="query" type="search" placeholder="Search text in your PDFs (at least 3 characters)"
+             autocomplete="off" autofocus required>
+      <button type="submit">Search</button>
+    </form>
+
+    <p id="summary"></p>
+    <ul id="results"></ul>
+  </main>
+
+  <script>
+    const form = document.getElementById("search-form");
+    const queryInput = document.getElementById("query");
+    const summary = document.getElementById("summary");
+    const resultList = document.getElementById("results");
+    const statusLine = document.getElementById("status");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();  // stay on the page instead of a full form submission
+      const query = queryInput.value;
+      summary.className = "";
+      summary.textContent = "Searching…";
+      resultList.replaceChildren();
+
+      const response = await fetch("/search?q=" + encodeURIComponent(query));
+      const body = await response.json();
+      if (!response.ok) {
+        summary.className = "error";
+        summary.textContent = typeof body.detail === "string" ? body.detail : "Search failed.";
+        return;
+      }
+      showResults(body.results);
+    });
+
+    function showResults(results) {
+      // Group pages by file: one line per file reads better than one per page.
+      const pagesByFile = new Map();
+      for (const { file, page } of results) {
+        if (!pagesByFile.has(file)) pagesByFile.set(file, []);
+        pagesByFile.get(file).push(page);
+      }
+
+      summary.textContent = results.length === 0
+        ? "No matches."
+        : `${results.length} page${results.length === 1 ? "" : "s"} in ` +
+          `${pagesByFile.size} file${pagesByFile.size === 1 ? "" : "s"}`;
+
+      for (const [file, pages] of pagesByFile) {
+        const item = document.createElement("li");
+        const name = document.createElement("span");
+        name.className = "file";
+        // textContent, not innerHTML: filenames are user input and must never
+        // be interpreted as HTML.
+        name.textContent = file;
+        const pageList = document.createElement("span");
+        pageList.className = "pages";
+        pageList.textContent = ` — page${pages.length === 1 ? "" : "s"} ${pages.join(", ")}`;
+        item.append(name, pageList);
+        resultList.append(item);
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const response = await fetch("/status");
+        const { processing, done, failed } = await response.json();
+        statusLine.textContent =
+          `${done} file${done === 1 ? "" : "s"} indexed · ${processing} processing · ${failed} failed`;
+      } catch {
+        statusLine.textContent = "Status unavailable.";
+      }
+    }
+
+    // Keep the counters live, e.g. while a batch of PDFs is being indexed.
+    refreshStatus();
+    setInterval(refreshStatus, 3000);
+  </script>
+</body>
+</html>

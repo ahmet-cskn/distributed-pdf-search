@@ -62,3 +62,10 @@ def test_app_connects_using_redis_url(redis, redis_url, monkeypatch):
     set_status(redis, "a.pdf", FileStatus.PROCESSING)
     with TestClient(app) as client:  # "with" runs the lifespan
         assert client.get("/status").json() == {"processing": 1, "done": 0, "failed": 0}
+
+
+def test_search_page(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert '<form id="search-form">' in response.text
