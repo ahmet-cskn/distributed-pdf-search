@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environment (managed by uv)
+.venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment files and secrets
+.env
+.env.*
+
+# Terraform (state can contain sensitive values)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
