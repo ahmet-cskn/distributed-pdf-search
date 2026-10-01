@@ -233,7 +233,7 @@ Prometheus scrapes metrics from workers and the query service; Grafana dashboard
 - **Concurrency:** many concurrent writers produce the same index as a single writer.
 - **Integration:** S3/SQS paths tested against LocalStack.
 - **Test data:** generated PDFs with known content; real lecture slides for manual end-to-end testing.
-- **CI:** GitHub Actions runs lint (ruff) and tests on every push, with Redis as a service container.
+- **CI:** GitHub Actions runs lint (ruff) and tests on every push, with Redis as a service container, and checks Terraform formatting and validity (no AWS credentials in CI).
 
 ## 9. Capacity estimates
 

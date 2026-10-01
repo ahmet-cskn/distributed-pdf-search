@@ -36,6 +36,22 @@ The API is documented interactively at http://localhost:8000/docs.
 | `GET /search?q=<query>` | Pages containing the query (`400` if shorter than 3 characters after normalization) |
 | `GET /status` | Number of files processing, done and failed |
 
+## AWS infrastructure
+
+The S3 bucket, SQS queues, IAM users and budget alert are defined with Terraform in [`infra/`](infra/). Requirements: the [AWS CLI](https://aws.amazon.com/cli/) and [Terraform](https://developer.hashicorp.com/terraform/install).
+
+```bash
+aws login --profile <your-profile>      # temporary credentials, no stored keys
+export AWS_PROFILE=<your-profile>
+
+cd infra
+cp terraform.tfvars.example terraform.tfvars   # then set your alert email
+terraform init
+terraform apply
+```
+
+`terraform output` prints the bucket name and queue URLs. Terraform state stays local and is git-ignored.
+
 ## Development
 
 ```bash
