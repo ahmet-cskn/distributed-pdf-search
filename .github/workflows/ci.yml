@@ -44,3 +44,18 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.4
+      - run: terraform fmt -check -recursive
+      # No backend and no AWS credentials: validation only checks the code.
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate

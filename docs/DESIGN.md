@@ -43,7 +43,7 @@ flowchart LR
 | Component | Runs on | Responsibility |
 |---|---|---|
 | Watcher | Laptop (plain Python process) | Detect new PDFs in the folder and upload them to S3 |
-| S3 bucket | AWS (`eu-central-1`) | Durable storage for PDFs; emits an event per upload |
+| S3 bucket | AWS (`eu-north-1`) | Durable storage for PDFs; emits an event per upload |
 | SQS queue + DLQ | AWS | Distributes one job per file to workers; isolates poison messages |
 | Workers | kind cluster (Deployment) | Download, extract, normalize, index |
 | KEDA | kind cluster | Scales workers on SQS queue length (0 ↔ N) |
@@ -65,7 +65,8 @@ flowchart LR
 ### 3.2 S3 → SQS
 
 - The bucket is private (public access blocked) with default encryption.
-- An event notification on `s3:ObjectCreated:*` with suffix filter `.pdf` delivers to an SQS **standard** queue (ordering is not needed, so FIFO is not used).
+- An event notification on `s3:ObjectCreated:*` with suffix filters `.pdf` and `.PDF` (filters are case-sensitive; mixed case like `.Pdf` is not matched) delivers to an SQS **standard** queue (ordering is not needed, so FIFO is not used).
+- A queue policy allows `sqs:SendMessage` only from the S3 service on behalf of this bucket in this account (`aws:SourceArn`, `aws:SourceAccount`), and denies non-TLS access.
 - Redrive policy: after **3** receives, a message moves to the DLQ (14-day retention).
 
 ### 3.3 Worker
@@ -198,7 +199,9 @@ All workers write directly to one Redis instance; one query service reads from i
 
 ## 6. Infrastructure and deployment
 
-- **AWS** (Terraform, region `eu-central-1`): S3 bucket, SQS queue, DLQ, S3→SQS notification and queue policy, IAM users and least-privilege policies, AWS Budgets alert (~$5/month).
+- **AWS** (Terraform, `infra/`, region `eu-north-1`): S3 bucket, SQS queue, DLQ, S3→SQS notification and queue policy, IAM users and least-privilege policies, AWS Budgets alert (~$5/month).
+- **Region:** the account uses AWS's project-based account experience, which pins each project to one Region by contact country (`eu-north-1` for Europe). `eu-central-1` was the original choice; the difference is a few milliseconds of latency, which is irrelevant for file uploads and downloads.
+- **Operator credentials:** `aws login` (temporary credentials, no long-lived keys on the developer machine); Terraform reads them via `AWS_PROFILE`.
 - **IAM (least privilege):**
 
   | Identity | Permissions |
@@ -230,7 +233,7 @@ Prometheus scrapes metrics from workers and the query service; Grafana dashboard
 - **Concurrency:** many concurrent writers produce the same index as a single writer.
 - **Integration:** S3/SQS paths tested against LocalStack.
 - **Test data:** generated PDFs with known content; real lecture slides for manual end-to-end testing.
-- **CI:** GitHub Actions runs lint (ruff) and tests on every push, with Redis as a service container.
+- **CI:** GitHub Actions runs lint (ruff) and tests on every push, with Redis as a service container, and checks Terraform formatting and validity (no AWS credentials in CI).
 
 ## 9. Capacity estimates
 
