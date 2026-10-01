@@ -22,3 +22,12 @@ output "dlq_url" {
   description = "Dead-letter queue holding jobs that failed repeatedly."
   value       = aws_sqs_queue.jobs_dlq.url
 }
+
+output "iam_users" {
+  description = "IAM users per component; create their access keys with the AWS CLI."
+  value = {
+    watcher = aws_iam_user.watcher.name
+    worker  = aws_iam_user.worker.name
+    keda    = aws_iam_user.keda.name
+  }
+}
