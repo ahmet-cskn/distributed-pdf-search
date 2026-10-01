@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from pdfsearch.text import normalize
+from pdfsearch.text import normalize, trigrams
 
 
 @pytest.mark.parametrize(
@@ -58,3 +58,43 @@ def test_output_format(raw):
 def test_idempotent(raw):
     once = normalize(raw)
     assert normalize(once) == once
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Too short for any trigram
+        ("", set()),
+        ("a", set()),
+        ("ab", set()),
+        # Exactly one window
+        ("abc", {"abc"}),
+        # Windows overlap and include spaces
+        ("ab cd", {"ab ", "b c", " cd"}),
+        ("hello every", {"hel", "ell", "llo", "lo ", "o e", " ev", "eve", "ver", "ery"}),
+        # Repeated windows are counted once
+        ("aaaa", {"aaa"}),
+        ("abab", {"aba", "bab"}),
+    ],
+)
+def test_trigrams(text, expected):
+    assert trigrams(text) == expected
+
+
+SAMPLE_PAGE = normalize("Hello everyone, welcome to the first lecture on distributed systems!")
+
+
+def test_substring_trigrams_are_subset():
+    # The property the index relies on: if the query is a substring of the
+    # page, every trigram of the query is also a trigram of the page. So
+    # intersecting trigram lookups can never lose a real match.
+    page_trigrams = trigrams(SAMPLE_PAGE)
+    for start in range(len(SAMPLE_PAGE)):
+        for end in range(start + 3, len(SAMPLE_PAGE) + 1):
+            query = SAMPLE_PAGE[start:end]
+            assert trigrams(query) <= page_trigrams, query
+
+
+def test_trigram_count_is_bounded():
+    text = "the quick brown fox jumps over the lazy dog"
+    assert len(trigrams(text)) <= len(text) - 2

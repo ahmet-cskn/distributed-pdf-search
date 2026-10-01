@@ -33,5 +33,5 @@ select = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = ["--import-mode=importlib"]
+testpaths = ["src", "tests"]
+addopts = ["--import-mode=importlib", "--doctest-modules"]
