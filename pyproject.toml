@@ -7,11 +7,18 @@ license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.142.2",
+    "pymupdf>=1.28.2",
     "redis>=8.1.0",
+    "uvicorn>=0.54.0",
 ]
+
+[project.scripts]
+pdfsearch-index = "pdfsearch.local_index:main"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.13.1",
     "pytest>=8",
     "ruff>=0.6",
 ]
@@ -37,3 +44,7 @@ select = [
 [tool.pytest.ini_options]
 testpaths = ["src", "tests"]
 addopts = ["--import-mode=importlib", "--doctest-modules"]
+filterwarnings = [
+    # Emitted by PyMuPDF's SWIG-generated bindings on import, not by our code.
+    "ignore:builtin type (SwigPyPacked|SwigPyObject|swigvarlink) has no __module__ attribute:DeprecationWarning",
+]
