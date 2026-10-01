@@ -78,8 +78,7 @@ loop:
     set status(key) = processing
     pdf = s3.download(key)
     for each page (1-based):                                # visibility heartbeat runs meanwhile
-        text = normalize(extract(page))
-        index_page(key, page, text)                         # §4.4
+        index_page(key, page, extract(page))                # normalizes, then §4.4
     set status(key) = done, pages = n
     sqs.delete(msg)
 
