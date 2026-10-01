@@ -24,6 +24,11 @@ htmlcov/
 *.tfstate.*
 crash.log
 crash.*.log
+# Variable files hold personal values (e.g. the budget alert email)
+*.tfvars
+!*.tfvars.example
+# Saved plans can contain sensitive values too
+*.tfplan
 
 # Editors and OS
 .vscode/
