@@ -65,7 +65,8 @@ flowchart LR
 ### 3.2 S3 → SQS
 
 - The bucket is private (public access blocked) with default encryption.
-- An event notification on `s3:ObjectCreated:*` with suffix filter `.pdf` delivers to an SQS **standard** queue (ordering is not needed, so FIFO is not used).
+- An event notification on `s3:ObjectCreated:*` with suffix filters `.pdf` and `.PDF` (filters are case-sensitive; mixed case like `.Pdf` is not matched) delivers to an SQS **standard** queue (ordering is not needed, so FIFO is not used).
+- A queue policy allows `sqs:SendMessage` only from the S3 service on behalf of this bucket in this account (`aws:SourceArn`, `aws:SourceAccount`), and denies non-TLS access.
 - Redrive policy: after **3** receives, a message moves to the DLQ (14-day retention).
 
 ### 3.3 Worker
