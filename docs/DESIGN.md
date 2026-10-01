@@ -277,4 +277,4 @@ CI is introduced with milestone 1 and extended as the project grows.
 - Re-uploading a file under an existing name is unsupported (stale index entries would remain).
 - Very large PDFs limit load balancing with per-file jobs; splitting into page-range jobs is a possible improvement.
 - Changing the shard count in v2 requires a full re-index.
-- Possible extensions: OCR, file deletion/update, result snippets, pagination, deployment to EKS + ElastiCache.
+- Possible extensions: OCR, file deletion/update, result snippets, pagination, links from search results to the PDF page via S3 presigned URLs, deployment to EKS + ElastiCache.

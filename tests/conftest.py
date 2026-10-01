@@ -1,5 +1,6 @@
 import os
 
+import pymupdf
 import pytest
 from redis import Redis
 from redis.exceptions import ConnectionError
@@ -22,3 +23,19 @@ def redis():
     yield client
     client.flushdb()
     client.close()
+
+
+def _make_pdf(pages: list[str]) -> bytes:
+    """Create a PDF in memory with one page per string ("" = blank page)."""
+    with pymupdf.open() as doc:
+        for text in pages:
+            page = doc.new_page()
+            if text:
+                page.insert_text((72, 72), text)
+        return doc.tobytes()
+
+
+@pytest.fixture
+def make_pdf():
+    """Factory fixture: tests call make_pdf(["page 1 text", "page 2 text"])."""
+    return _make_pdf
