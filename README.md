@@ -52,6 +52,31 @@ terraform apply
 
 `terraform output` prints the bucket name and queue URLs. Terraform state stays local and is git-ignored.
 
+## Run a worker against AWS
+
+Each component has its own least-privilege IAM user. Create an access key for the worker once and store it as a CLI profile, without printing the secret (zsh):
+
+```bash
+aws iam create-access-key --user-name pdfsearch-worker --profile <your-profile> \
+  --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text \
+  | read -r KEY SECRET \
+  && aws configure set aws_access_key_id "$KEY" --profile pdfsearch-worker \
+  && aws configure set aws_secret_access_key "$SECRET" --profile pdfsearch-worker \
+  && aws configure set region eu-north-1 --profile pdfsearch-worker; unset KEY SECRET
+```
+
+Then start the worker (Redis must be running) and upload a PDF; it becomes searchable in the search page:
+
+```bash
+AWS_PROFILE=pdfsearch-worker \
+QUEUE_URL=$(terraform -chdir=infra output -raw queue_url) \
+uv run pdfsearch-worker
+
+aws s3 cp lecture.pdf s3://$(terraform -chdir=infra output -raw bucket_name)/ --profile <your-profile>
+```
+
+The worker stops gracefully on Ctrl+C (press twice to stop immediately). See `pdfsearch.worker.main` for all settings.
+
 ## Development
 
 ```bash
