@@ -73,3 +73,34 @@ def sqs(aws):
 @pytest.fixture
 def queue_url(sqs):
     return sqs.create_queue(QueueName="pdfsearch-jobs")["QueueUrl"]
+
+
+@pytest.fixture
+def s3(aws):
+    return boto3.client("s3")
+
+
+@pytest.fixture
+def bucket(s3, sqs, queue_url):
+    """A bucket wired to the job queue like infra/events.tf: PDF uploads send jobs."""
+    name = "pdfsearch-pdfs-test"
+    s3.create_bucket(Bucket=name, CreateBucketConfiguration={"LocationConstraint": "eu-north-1"})
+    queue_arn = sqs.get_queue_attributes(QueueUrl=queue_url, AttributeNames=["QueueArn"])
+    s3.put_bucket_notification_configuration(
+        Bucket=name,
+        NotificationConfiguration={
+            "QueueConfigurations": [
+                {
+                    "QueueArn": queue_arn["Attributes"]["QueueArn"],
+                    "Events": ["s3:ObjectCreated:*"],
+                    "Filter": {"Key": {"FilterRules": [{"Name": "suffix", "Value": suffix}]}},
+                }
+                for suffix in [".pdf", ".PDF"]
+            ]
+        },
+    )
+    # Like real S3, configuring the notification sends a test event. Remove
+    # it so tests start with an empty queue.
+    for message in sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10)["Messages"]:
+        sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message["ReceiptHandle"])
+    return name
