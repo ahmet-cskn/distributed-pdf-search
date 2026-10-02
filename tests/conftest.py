@@ -1,3 +1,4 @@
+import json
 import os
 
 import boto3
@@ -71,8 +72,19 @@ def sqs(aws):
 
 
 @pytest.fixture
-def queue_url(sqs):
-    return sqs.create_queue(QueueName="pdfsearch-jobs")["QueueUrl"]
+def dlq_url(sqs):
+    return sqs.create_queue(QueueName="pdfsearch-jobs-dlq")["QueueUrl"]
+
+
+@pytest.fixture
+def queue_url(sqs, dlq_url):
+    """Job queue configured like infra/sqs.tf: DLQ after 3 receives."""
+    dlq_arn = sqs.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=["QueueArn"])
+    redrive = {"deadLetterTargetArn": dlq_arn["Attributes"]["QueueArn"], "maxReceiveCount": 3}
+    return sqs.create_queue(
+        QueueName="pdfsearch-jobs",
+        Attributes={"VisibilityTimeout": "300", "RedrivePolicy": json.dumps(redrive)},
+    )["QueueUrl"]
 
 
 @pytest.fixture
