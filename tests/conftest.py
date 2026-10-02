@@ -1,7 +1,9 @@
 import os
 
+import boto3
 import pymupdf
 import pytest
+from moto import mock_aws
 from redis.exceptions import ConnectionError
 
 from pdfsearch.db import connect
@@ -44,3 +46,30 @@ def _make_pdf(pages: list[str]) -> bytes:
 def make_pdf():
     """Factory fixture: tests call make_pdf(["page 1 text", "page 2 text"])."""
     return _make_pdf
+
+
+@pytest.fixture
+def aws(monkeypatch):
+    """Fake AWS (moto) for the duration of a test.
+
+    Fake credentials make sure no test can ever reach a real AWS account,
+    even if the shell has AWS_PROFILE set.
+    """
+    for name in ["AWS_PROFILE", "AWS_DEFAULT_PROFILE"]:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-north-1")
+    with mock_aws():
+        yield
+
+
+@pytest.fixture
+def sqs(aws):
+    return boto3.client("sqs")
+
+
+@pytest.fixture
+def queue_url(sqs):
+    return sqs.create_queue(QueueName="pdfsearch-jobs")["QueueUrl"]

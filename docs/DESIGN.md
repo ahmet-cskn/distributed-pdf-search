@@ -212,7 +212,7 @@ All workers write directly to one Redis instance; one query service reads from i
 
 - **Secrets:** access keys are created with the AWS CLI (not Terraform, so they never land in Terraform state), stored as Kubernetes Secrets, and never committed. Terraform state is local and git-ignored.
 - **Kubernetes:** local **kind** cluster. Plain YAML manifests for project services; KEDA, Prometheus and Grafana installed via Helm.
-- **Development:** Docker Compose provides a local Redis; LocalStack emulates S3 and SQS for automated tests.
+- **Development:** Docker Compose provides a local Redis; moto fakes S3 and SQS in-process for automated tests.
 
 ## 7. Observability
 
@@ -231,7 +231,7 @@ Prometheus scrapes metrics from workers and the query service; Grafana dashboard
 - **Brute-force equivalence:** index generated pages; for many queries, results must equal a naive substring scan over all pages.
 - **Idempotency:** indexing the same file twice leaves the index unchanged.
 - **Concurrency:** many concurrent writers produce the same index as a single writer.
-- **Integration:** S3/SQS paths tested against LocalStack.
+- **Integration:** S3/SQS paths tested against moto (in-process fakes; LocalStack has required an account and auth token since March 2026), plus manual end-to-end runs against real AWS.
 - **Test data:** generated PDFs with known content; real lecture slides for manual end-to-end testing.
 - **CI:** GitHub Actions runs lint (ruff) and tests on every push, with Redis as a service container, and checks Terraform formatting and validity (no AWS credentials in CI).
 
@@ -258,7 +258,7 @@ Prometheus scrapes metrics from workers and the query service; Grafana dashboard
 | Orchestration | Kubernetes (kind) + KEDA | Docker Compose (no autoscaling), EKS (cost) |
 | Infrastructure as code | Terraform | AWS CDK, console |
 | API | FastAPI | — |
-| Tooling | uv, ruff, pytest, LocalStack, GitHub Actions | — |
+| Tooling | uv, ruff, pytest, moto, GitHub Actions | LocalStack (requires an account and auth token since 2026) |
 
 ## 11. Milestones
 
