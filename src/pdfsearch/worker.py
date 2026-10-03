@@ -6,7 +6,6 @@ Configured through environment variables, see main().
 
 import logging
 import os
-import signal
 import sys
 import threading
 from dataclasses import dataclass
@@ -20,6 +19,7 @@ from pdfsearch.db import connect
 from pdfsearch.heartbeat import VisibilityHeartbeat
 from pdfsearch.ingest import index_file
 from pdfsearch.jobs import InvalidJobMessage, S3Object, parse_job_message
+from pdfsearch.runtime import configure_logging, install_signal_handlers
 from pdfsearch.status import FileStatus, set_status
 
 log = logging.getLogger(__name__)
@@ -142,24 +142,6 @@ class Worker:
             log.exception("could not mark %s as failed", file)
 
 
-def install_signal_handlers(stop: threading.Event) -> None:
-    """SIGTERM (sent by Kubernetes) or Ctrl+C: finish the current job, then exit.
-
-    A second signal exits immediately; the job being processed is then not
-    deleted and will be redelivered.
-    """
-
-    def handle(signum: int, frame: Any) -> None:
-        if stop.is_set():
-            log.warning("second %s, exiting immediately", signal.Signals(signum).name)
-            sys.exit(1)
-        log.info("received %s, finishing the current job", signal.Signals(signum).name)
-        stop.set()
-
-    signal.signal(signal.SIGTERM, handle)
-    signal.signal(signal.SIGINT, handle)
-
-
 def main() -> int:
     """Entry point of pdfsearch-worker.
 
@@ -172,10 +154,7 @@ def main() -> int:
         HEARTBEAT_INTERVAL  seconds between extensions (default 60)
         LOG_LEVEL           default INFO
     """
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    configure_logging()
 
     queue_url = os.environ.get("QUEUE_URL")
     if not queue_url:

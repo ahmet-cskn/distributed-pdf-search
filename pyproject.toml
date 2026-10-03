@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 pdfsearch-index = "pdfsearch.local_index:main"
 pdfsearch-worker = "pdfsearch.worker:main"
+pdfsearch-watch = "pdfsearch.watcher:main"
 
 [dependency-groups]
 dev = [

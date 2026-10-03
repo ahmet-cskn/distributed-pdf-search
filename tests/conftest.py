@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 
 import boto3
 import pymupdf
@@ -116,3 +117,12 @@ def bucket(s3, sqs, queue_url):
     for message in sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10)["Messages"]:
         sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message["ReceiptHandle"])
     return name
+
+
+@pytest.fixture
+def preserve_signal_handlers():
+    """Restore SIGTERM/SIGINT handling after tests that install handlers."""
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    yield
+    for sig, handler in previous.items():
+        signal.signal(sig, handler)

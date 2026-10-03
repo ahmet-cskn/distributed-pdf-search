@@ -30,6 +30,9 @@ crash.*.log
 # Saved plans can contain sensitive values too
 *.tfplan
 
+# Folder watched by pdfsearch-watch: PDFs must never be committed
+/inbox/
+
 # Editors and OS
 .vscode/
 .idea/
