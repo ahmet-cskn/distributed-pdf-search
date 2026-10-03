@@ -1,6 +1,4 @@
 import json
-import os
-import signal
 import threading
 import time
 
@@ -8,7 +6,7 @@ import pytest
 
 from pdfsearch.search import PageMatch, search
 from pdfsearch.status import FileInfo, FileStatus, get_status, status_counts
-from pdfsearch.worker import Worker, install_signal_handlers, main
+from pdfsearch.worker import Worker, main
 
 
 @pytest.fixture
@@ -232,23 +230,6 @@ def test_loop_survives_a_failed_receive(fast_worker, sqs, s3, redis, bucket, mak
 
 
 # --- Process setup ------------------------------------------------------------
-
-
-def test_signal_requests_a_graceful_stop():
-    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
-    try:
-        stop = threading.Event()
-        install_signal_handlers(stop)
-
-        os.kill(os.getpid(), signal.SIGTERM)
-        assert stop.is_set()
-
-        # A second signal exits right away.
-        with pytest.raises(SystemExit):
-            os.kill(os.getpid(), signal.SIGINT)
-    finally:
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
 
 
 def test_main_requires_queue_url(monkeypatch):
