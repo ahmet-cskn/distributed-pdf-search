@@ -8,7 +8,7 @@ Drop a batch of PDFs into a folder: they are uploaded to Amazon S3, queued throu
 
 **Stack:** Python · Amazon S3 · Amazon SQS · Redis · Kubernetes (kind) · KEDA · Terraform · FastAPI · Prometheus
 
-> Work in progress. See [docs/DESIGN.md](docs/DESIGN.md) for the full design.
+> See [docs/DESIGN.md](docs/DESIGN.md) for the full design and [the benchmark](#benchmark) for measured throughput.
 
 ## Run locally
 
@@ -111,6 +111,30 @@ uv run pdfsearch-generate inbox --count 1000 --prefix batch-
 ```
 
 `make help` lists all targets; `make restart` rebuilds the image and rolls out new pods after a code change; `make prometheus` opens Prometheus at http://localhost:9090; [docs/METRICS.md](docs/METRICS.md) has ready-made queries.
+
+## Benchmark
+
+Indexing throughput by number of workers: 150 generated PDFs (3,183 pages) per run, all queued before exactly N workers start, median of 3 runs. Measured on the kind cluster on a MacBook Air (Apple M1: 4 performance + 4 efficiency cores; Docker limited to 8 CPUs and 5 GB), against S3 and SQS in `eu-north-1`.
+
+![Throughput and time per page by number of workers](docs/benchmark/throughput.png)
+
+| Workers | Pages/s | Speedup | Worker CPU per page | `index` phase per page |
+|---|---|---|---|---|
+| 1 | 53 | 1.0× | 6.0 ms | 5.8 ms |
+| 2 | 100 | 1.9× | 5.5 ms | 6.2 ms |
+| 3 | 135 | 2.5× | 6.3 ms | 7.2 ms |
+| 4 | 140 | 2.6× | 8.0 ms | 8.3 ms |
+| 5 | 169 | 3.2× | 9.9 ms | 10.1 ms |
+| 6 | 186 | 3.5× | 11.8 ms | 12.8 ms |
+
+What the per-phase metrics show:
+
+- **Workers mostly wait on AWS.** With one worker, receiving the job, downloading the PDF and deleting the job take ~12 of ~18.5 ms per page; extracting the text takes ~1 ms. Workers are I/O-bound, which is why adding them helps even on one machine.
+- **Redis is not the bottleneck.** It spends 2.2 µs per `SADD`, ~1.7 ms per page (~750 trigrams), and used at most 0.3 of its single core.
+- **Scaling flattens because of the laptop's CPU.** Worker CPU time per page is flat at ~6 ms up to 3 workers and doubles to ~12 ms at 6: the M1 has 4 fast cores, shared with Redis, Prometheus and Kubernetes, and further work runs on its slower efficiency cores. The phase that grows most, `index`, is mostly CPU work in the worker (the Redis client encoding ~750 commands and parsing the replies per page), not time in Redis.
+- **8 workers no longer fit** next to Prometheus in 5 GB: the node starts swapping and health checks fail.
+
+The full analysis and its limits are in [docs/DESIGN.md §9](docs/DESIGN.md#9-capacity-estimates). To reproduce: `uv run python scripts/benchmark.py --repeat 3` with the cluster deployed (every run is kept in [`docs/benchmark/runs.csv`](docs/benchmark/runs.csv)).
 
 ## Development
 
