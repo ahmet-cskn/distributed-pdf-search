@@ -59,3 +59,11 @@ jobs:
       # No backend and no AWS credentials: validation only checks the code.
       - run: terraform init -backend=false -input=false
       - run: terraform validate
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t pdfsearch:ci .
+      # Smoke test: the image starts and its commands are installed.
+      - run: docker run --rm pdfsearch:ci pdfsearch-index --help
