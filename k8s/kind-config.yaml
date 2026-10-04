@@ -1,0 +1,13 @@
+# Local Kubernetes cluster for pdfsearch: `make cluster`.
+# kind runs each Kubernetes node as a Docker container on this machine.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: pdfsearch
+nodes:
+  - role: control-plane
+    # Make the search API (a NodePort Service on port 30080 inside the node)
+    # reachable from this machine at http://localhost:8080.
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        listenAddress: "127.0.0.1"

@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from redis import Redis
+from redis.exceptions import RedisError
 
 from pdfsearch.db import connect
 from pdfsearch.search import QueryTooShortError, search
@@ -80,3 +81,22 @@ def status_endpoint(redis: RedisDep) -> StatusResponse:
 @app.get("/", include_in_schema=False)
 def search_page() -> FileResponse:
     return FileResponse(SEARCH_PAGE)
+
+
+# Health checks for Kubernetes probes. They are separate on purpose:
+# - liveness: "is this process working at all?" Failing it makes Kubernetes
+#   restart the container, which would not help if only Redis is down.
+# - readiness: "can it serve requests right now?" Failing it only stops
+#   traffic from being sent to this pod until it passes again.
+@app.get("/livez", include_in_schema=False)
+def livez() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/readyz", include_in_schema=False, response_model=None)
+def readyz(redis: RedisDep) -> dict[str, str] | JSONResponse:
+    try:
+        redis.ping()
+    except RedisError as e:
+        return JSONResponse(status_code=503, content={"status": "unavailable", "reason": str(e)})
+    return {"status": "ok"}

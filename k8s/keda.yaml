@@ -1,0 +1,52 @@
+# Autoscaling of the workers on the SQS queue length (docs/DESIGN.md §3.5).
+# Requires KEDA in the cluster: `make keda`.
+
+# How KEDA authenticates to AWS: with the pdfsearch-keda IAM user, which may
+# only read the job queue's attributes. The Secret is created with `make keda-secret`.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-aws
+spec:
+  secretTargetRef:
+    - parameter: awsAccessKeyID
+      name: keda-aws
+      key: AWS_ACCESS_KEY_ID
+    - parameter: awsSecretAccessKey
+      name: keda-aws
+      key: AWS_SECRET_ACCESS_KEY
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker
+spec:
+  scaleTargetRef:
+    name: worker
+  # No workers while the queue is empty; at most one per CPU core of this machine.
+  minReplicaCount: 0
+  maxReplicaCount: 8
+  # Check the queue every 5 s; scale to zero 60 s after it was last non-empty.
+  pollingInterval: 5
+  cooldownPeriod: 60
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: keda-aws
+      metadata:
+        # Read from the worker's own environment (the aws-config ConfigMap),
+        # so the queue URL is configured in exactly one place.
+        queueURLFromEnv: QUEUE_URL
+        awsRegion: eu-north-1
+        # Target: about 10 messages per worker. Messages being processed count
+        # too (scaleOnInFlight), so busy workers are not removed mid-job.
+        queueLength: "10"
+        activationQueueLength: "0"
+        scaleOnInFlight: "true"
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        # Kubernetes waits 5 minutes by default before removing pods after
+        # load drops; 30 s makes scaling down visible in a short demo.
+        scaleDown:
+          stabilizationWindowSeconds: 30

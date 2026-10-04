@@ -181,6 +181,8 @@ Properties:
 | `GET /` | Minimal HTML page with a search box |
 | `GET /search?q=<query>` | `200` with `{"query": …, "results": [{"file": …, "page": …}]}`; `400` if the normalized query is shorter than 3 characters |
 | `GET /status` | Counts of files per status |
+| `GET /livez` | Liveness probe: the process is running (no dependencies) |
+| `GET /readyz` | Readiness probe: `200` if Redis answers, else `503` |
 
 ## 5. Scaling phases
 
@@ -237,14 +239,21 @@ Prometheus scrapes metrics from workers and the query service; Grafana dashboard
 
 ## 9. Capacity estimates
 
-| Quantity | Estimate |
-|---|---|
-| PDFs | ~1,000 |
-| Pages | ~30,000 |
-| Normalized text | ~90 MB |
-| Index size | a few hundred MB (fits in one Redis) |
-| Extraction | ~10–50 ms/page → ~5–25 min on one core (the bottleneck) |
-| Index writes | ~1,500 unique trigrams/page → ~45M `SADD` members, ~1 min of Redis time pipelined |
+| Quantity | Initial estimate | Measured (1,033 PDFs, ~22,700 pages) |
+|---|---|---|
+| PDFs | ~1,000 | 1,033 |
+| Pages | ~30,000 | ~22,700 |
+| Normalized text | ~90 MB | — |
+| Index size (Redis memory) | a few hundred MB | **686 MB** |
+| Extraction | ~10–50 ms/page → ~5–25 min on one core | 138 pages/s in one local process (generated PDFs) |
+| Index writes | ~1,500 unique trigrams/page → ~45M `SADD` members, ~1 min of Redis time pipelined | — |
+| End-to-end, 8 workers on one laptop | — | ~60 pages/s (1,000 PDFs in ~6 min) |
+
+**Index size.** Most of the memory is in the trigram sets: every page id is stored as a full string (`batch-0500.pdf#12`, ~20 bytes) in each of its pages' ~1,500 trigram sets, i.e. tens of millions of set members. Storing short integer page ids instead (with one mapping from id to `<file>#<page>`) would shrink the sets several-fold and let Redis use its compact integer-set encoding. Until then, Redis in Kubernetes has a 2 GiB memory limit, which also leaves room for the temporary extra memory of rewriting the AOF file.
+
+**Restart time.** On startup Redis loads its last snapshot and then replays every write logged since. Right after indexing the 1,000-PDF batch, that replay took ~140 s (the snapshot itself loaded in ~4 s); after Redis compacted the log, a restart took ~30 s. Restart time therefore depends on how much was written since the last compaction, which Redis triggers automatically as the log grows.
+
+**Throughput.** 8 workers together were slower per worker than the single-process baseline. Candidate causes (CPU contention on one machine, a single Redis serializing all writes, per-job network round trips to `eu-north-1`) are to be separated with the metrics of milestone 7.
 
 ## 10. Technology choices
 

@@ -30,6 +30,9 @@ crash.*.log
 # Saved plans can contain sensitive values too
 *.tfplan
 
+# Generated Kubernetes settings (see k8s/aws.env.example)
+k8s/aws.env
+
 # Folder watched by pdfsearch-watch: PDFs must never be committed
 /inbox/
 

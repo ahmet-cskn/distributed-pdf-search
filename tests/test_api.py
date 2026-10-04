@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pdfsearch.api import app, get_redis
+from pdfsearch.db import connect
 from pdfsearch.index import index_page
 from pdfsearch.status import FileStatus, set_status
 
@@ -69,3 +70,25 @@ def test_search_page(client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert '<form id="search-form">' in response.text
+
+
+def test_livez_needs_nothing():
+    # No Redis override, no lifespan: liveness must not depend on Redis.
+    assert TestClient(app).get("/livez").json() == {"status": "ok"}
+
+
+def test_readyz_when_redis_is_reachable(client):
+    response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_readyz_when_redis_is_down():
+    unreachable = connect("redis://localhost:1/0")
+    app.dependency_overrides[get_redis] = lambda: unreachable
+    try:
+        response = TestClient(app).get("/readyz")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 503
+    assert response.json()["status"] == "unavailable"

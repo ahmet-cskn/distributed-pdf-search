@@ -1,0 +1,9 @@
+# Allowlist: send only what the image build needs to Docker. Everything else
+# (inbox/ PDFs, .venv, Terraform state, .env files, git history) stays out.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src/
+**/__pycache__

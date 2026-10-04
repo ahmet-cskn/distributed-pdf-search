@@ -1,0 +1,74 @@
+# Query service and search page, at http://localhost:8080 (see kind-config.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels:
+    app: api
+spec:
+  # NodePort: reachable on a fixed port of the node, which kind maps to the host.
+  type: NodePort
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: pdfsearch:dev
+          # Loaded into the cluster with `kind load`; never pulled from a registry.
+          imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "pdfsearch.api:app", "--host", "0.0.0.0", "--port", "8000"]
+          env:
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
