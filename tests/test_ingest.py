@@ -54,3 +54,12 @@ def test_cli_rejects_missing_folder(tmp_path):
 def test_cli_reports_unreachable_redis(tmp_path, capsys):
     assert main([str(tmp_path), "--redis-url", "redis://localhost:1/0"]) == 2
     assert "Cannot reach Redis" in capsys.readouterr().err
+
+
+def test_index_file_reports_time_per_phase(redis, make_pdf):
+    timings = {"extract": 1.0}  # existing values are added to, not replaced
+    index_file(redis, "a.pdf", make_pdf(["one", "two"]), timings=timings)
+
+    assert set(timings) == {"extract", "index"}
+    assert timings["extract"] > 1.0
+    assert timings["index"] > 0
