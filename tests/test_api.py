@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from pdfsearch.api import app, get_redis
 from pdfsearch.db import connect
@@ -92,3 +93,84 @@ def test_readyz_when_redis_is_down():
         app.dependency_overrides.clear()
     assert response.status_code == 503
     assert response.json()["status"] == "unavailable"
+
+
+# --- Metrics ------------------------------------------------------------------
+
+
+def value(name, **labels):
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+def test_requests_are_counted_by_route_template(client, redis):
+    before = value("pdfsearch_api_requests_total", route="/search", status="200")
+    before_400 = value("pdfsearch_api_requests_total", route="/search", status="400")
+
+    client.get("/search", params={"q": "raft"})
+    client.get("/search", params={"q": "paxos"})
+    client.get("/search", params={"q": "ab"})
+
+    # Two different query strings, one series: the label is the route, not the URL.
+    assert value("pdfsearch_api_requests_total", route="/search", status="200") == before + 2
+    assert value("pdfsearch_api_requests_total", route="/search", status="400") == before_400 + 1
+
+
+def test_unknown_paths_share_one_label(client):
+    before = value("pdfsearch_api_requests_total", route="unmatched", status="404")
+    client.get("/no-such-page")
+    client.get("/another-missing-page")
+    assert value("pdfsearch_api_requests_total", route="unmatched", status="404") == before + 2
+
+
+def test_request_duration_is_recorded(client):
+    before = value("pdfsearch_api_request_seconds_count", route="/status")
+    client.get("/status")
+    assert value("pdfsearch_api_request_seconds_count", route="/status") == before + 1
+
+
+class BrokenRedis:
+    def sinter(self, keys):
+        raise RuntimeError("unexpected failure")
+
+
+def test_server_errors_are_counted():
+    before = value("pdfsearch_api_requests_total", route="/search", status="500")
+    app.dependency_overrides[get_redis] = lambda: BrokenRedis()
+    try:
+        response = TestClient(app, raise_server_exceptions=False).get(
+            "/search", params={"q": "raft"}
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 500
+    assert value("pdfsearch_api_requests_total", route="/search", status="500") == before + 1
+
+
+def test_search_candidates_and_matches(client, redis):
+    # "abcde": two candidates (both pages have abc, bcd, cde), one real match.
+    index_page(redis, "a.pdf", 1, "abcd xcde")
+    index_page(redis, "b.pdf", 1, "abcde")
+    candidates = value("pdfsearch_search_candidates_sum")
+    matches = value("pdfsearch_search_matches_sum")
+    verify = value("pdfsearch_search_phase_seconds_count", phase="verify")
+
+    client.get("/search", params={"q": "abcde"})
+
+    assert value("pdfsearch_search_candidates_sum") == candidates + 2
+    assert value("pdfsearch_search_matches_sum") == matches + 1
+    assert value("pdfsearch_search_phase_seconds_count", phase="verify") == verify + 1
+
+
+def test_metrics_endpoint(client):
+    client.get("/status")
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    for name in [
+        "pdfsearch_api_requests_total",
+        "pdfsearch_api_request_seconds_bucket",
+        "pdfsearch_search_candidates_bucket",
+        "pdfsearch_search_phase_seconds_bucket",
+    ]:
+        assert name in response.text, name
+    assert "_created" not in response.text
