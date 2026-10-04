@@ -7,7 +7,7 @@ IMAGE     := pdfsearch:dev
 # context happens to be (it could be another cluster).
 KUBECTL   := kubectl --context kind-$(CLUSTER)
 
-.PHONY: help cluster cluster-delete image deploy status
+.PHONY: help cluster cluster-delete image deploy restart status
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -27,6 +27,11 @@ image: ## Build the Docker image and load it into the cluster
 deploy: ## Apply all Kubernetes manifests in k8s/
 	$(KUBECTL) apply -k k8s/
 	$(KUBECTL) -n $(NAMESPACE) rollout status statefulset/redis --timeout=120s
+	$(KUBECTL) -n $(NAMESPACE) rollout status deployment/api --timeout=120s
+
+restart: image ## Rebuild the image and restart the pods that use it
+	$(KUBECTL) -n $(NAMESPACE) rollout restart deployment/api
+	$(KUBECTL) -n $(NAMESPACE) rollout status deployment/api --timeout=120s
 
 status: ## Show the pods in the pdfsearch namespace
 	$(KUBECTL) -n $(NAMESPACE) get pods -o wide

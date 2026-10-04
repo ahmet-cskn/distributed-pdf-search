@@ -181,6 +181,8 @@ Properties:
 | `GET /` | Minimal HTML page with a search box |
 | `GET /search?q=<query>` | `200` with `{"query": …, "results": [{"file": …, "page": …}]}`; `400` if the normalized query is shorter than 3 characters |
 | `GET /status` | Counts of files per status |
+| `GET /livez` | Liveness probe: the process is running (no dependencies) |
+| `GET /readyz` | Readiness probe: `200` if Redis answers, else `503` |
 
 ## 5. Scaling phases
 

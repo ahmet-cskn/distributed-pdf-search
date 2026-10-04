@@ -5,3 +5,4 @@ namespace: pdfsearch
 resources:
   - namespace.yaml
   - redis.yaml
+  - api.yaml
