@@ -110,7 +110,7 @@ kubectl --context kind-pdfsearch -n pdfsearch get pods -l app=worker -w
 uv run pdfsearch-generate inbox --count 1000 --prefix batch-
 ```
 
-`make help` lists all targets; `make restart` rebuilds the image and rolls out new pods after a code change; `make prometheus` opens Prometheus at http://localhost:9090.
+`make help` lists all targets; `make restart` rebuilds the image and rolls out new pods after a code change; `make prometheus` opens Prometheus at http://localhost:9090; [docs/METRICS.md](docs/METRICS.md) has ready-made queries.
 
 ## Development
 

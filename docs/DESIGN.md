@@ -230,7 +230,7 @@ Prometheus (kube-prometheus-stack, trimmed to Prometheus and its operator) scrap
 
 Labels are bounded (route templates, phases, outcomes), never filenames or raw URLs, to keep the number of time series small.
 
-Grafana was dropped: on the development laptop (8 cores, 5 GB for Docker) its startup repeatedly overloaded the node, and failing health checks turned that into restart loops. Metrics are explored in Prometheus' UI (`make prometheus`) and plotted by the benchmark script.
+Grafana was dropped: on the development laptop (8 cores, 5 GB for Docker) its startup repeatedly overloaded the node, and failing health checks turned that into restart loops. Metrics are explored in Prometheus' UI (`make prometheus`), with ready-made queries in [METRICS.md](METRICS.md), and plotted by the benchmark script.
 
 **Benchmark caveat:** all pods share one laptop, so throughput plateaus around the machine's CPU core count. This is expected and documented with the results.
 
