@@ -6,7 +6,8 @@ metadata:
   labels:
     app: worker
 spec:
-  replicas: 1
+  # No "replicas" here: KEDA owns the replica count (k8s/keda.yaml). A fixed
+  # value would be reset by every `kubectl apply`, fighting the autoscaler.
   selector:
     matchLabels:
       app: worker
