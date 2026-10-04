@@ -18,6 +18,7 @@ dependencies = [
 pdfsearch-index = "pdfsearch.local_index:main"
 pdfsearch-worker = "pdfsearch.worker:main"
 pdfsearch-watch = "pdfsearch.watcher:main"
+pdfsearch-generate = "pdfsearch.generate:main"
 
 [dependency-groups]
 dev = [
