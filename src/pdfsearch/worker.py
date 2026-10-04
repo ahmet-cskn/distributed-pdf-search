@@ -148,7 +148,7 @@ def main() -> int:
     Environment variables:
         QUEUE_URL           SQS job queue (required)
         REDIS_URL           Redis to index into (default: see pdfsearch.db)
-        AWS_REGION, AWS_PROFILE or AWS access keys: standard AWS SDK settings
+        AWS_DEFAULT_REGION, AWS_PROFILE or AWS access keys: standard AWS SDK settings
         MAX_RECEIVE_COUNT   must match the queue's redrive policy (default 3)
         VISIBILITY_TIMEOUT  seconds a message stays hidden per extension (default 300)
         HEARTBEAT_INTERVAL  seconds between extensions (default 60)

@@ -1,0 +1,54 @@
+# Workers: receive jobs from SQS, download PDFs from S3, index them into Redis.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    app: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      # After SIGTERM, a worker finishes its current PDF (docs/DESIGN.md §3.3).
+      # Kubernetes force-kills it after this many seconds; an unfinished job is
+      # then simply redelivered by SQS.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: pdfsearch:dev
+          imagePullPolicy: IfNotPresent
+          command: ["pdfsearch-worker"]
+          env:
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+          envFrom:
+            # QUEUE_URL and AWS_DEFAULT_REGION, generated from Terraform's outputs.
+            - configMapRef:
+                name: aws-config
+            # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY of the pdfsearch-worker
+            # IAM user; created with `make worker-secret`, never stored in git.
+            - secretRef:
+                name: worker-aws
+          resources:
+            requests:
+              cpu: 500m
+              memory: 192Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

@@ -83,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="pdfsearch-watch",
         description="Upload PDFs dropped into a folder to S3 for indexing.",
         epilog="AWS credentials and region come from the standard AWS settings "
-        "(AWS_PROFILE, AWS_REGION, ...).",
+        "(AWS_PROFILE, AWS_DEFAULT_REGION, ...).",
     )
     parser.add_argument("folder", type=Path, help="folder to watch (subfolders are ignored)")
     parser.add_argument(
