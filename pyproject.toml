@@ -24,6 +24,7 @@ pdfsearch-generate = "pdfsearch.generate:main"
 [dependency-groups]
 dev = [
     "httpx2>=2.13.1",
+    "matplotlib>=3.11.2",
     "moto[s3,sqs]>=5.2.3",
     "pytest>=8",
     "ruff>=0.6",
