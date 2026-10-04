@@ -66,6 +66,27 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+        # Sidecar: translates Redis' INFO statistics (commands per second, CPU
+        # time, memory) into Prometheus metrics on port 9121.
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.93.0
+          env:
+            - name: REDIS_ADDR
+              value: redis://localhost:6379
+          ports:
+            - name: metrics
+              containerPort: 9121
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
   volumeClaimTemplates:
     - metadata:
         name: data

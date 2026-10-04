@@ -6,7 +6,7 @@ Distributed PDF indexing and substring search.
 
 Drop a batch of PDFs into a folder: they are uploaded to Amazon S3, queued through Amazon SQS, and processed by an autoscaling pool of Kubernetes workers that extract each page's text into a Redis trigram index. A query service then returns every `(file, page)` whose text contains a given string.
 
-**Stack:** Python · Amazon S3 · Amazon SQS · Redis · Kubernetes (kind) · KEDA · Terraform · FastAPI · Prometheus · Grafana
+**Stack:** Python · Amazon S3 · Amazon SQS · Redis · Kubernetes (kind) · KEDA · Terraform · FastAPI · Prometheus
 
 > Work in progress. See [docs/DESIGN.md](docs/DESIGN.md) for the full design.
 
@@ -94,6 +94,7 @@ Redis, the query service and the workers run in a local [kind](https://kind.sigs
 
 ```bash
 make cluster          # create the kind cluster
+make monitoring       # install Prometheus
 make keda             # install KEDA
 make image            # build the Docker image and load it into the cluster
 make worker-secret    # AWS keys from the pdfsearch-worker / pdfsearch-keda
@@ -109,7 +110,7 @@ kubectl --context kind-pdfsearch -n pdfsearch get pods -l app=worker -w
 uv run pdfsearch-generate inbox --count 1000 --prefix batch-
 ```
 
-`make help` lists all targets; `make restart` rebuilds the image and rolls out new pods after a code change.
+`make help` lists all targets; `make restart` rebuilds the image and rolls out new pods after a code change; `make prometheus` opens Prometheus at http://localhost:9090.
 
 ## Development
 

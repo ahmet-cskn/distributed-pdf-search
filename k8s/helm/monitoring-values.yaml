@@ -1,0 +1,72 @@
+# kube-prometheus-stack (Prometheus and its operator only), configured lean
+# for a single-node laptop cluster.
+# Installed with `make monitoring`.
+#
+# The chart's defaults overloaded this cluster (8 cores, 5 GB shared with
+# everything else): CPU was ~95% busy, components failed their health checks
+# and kept restarting. Everything below that is disabled, keeps only what
+# this project's dashboard and benchmark need.
+
+# No alerting in this project: no Alertmanager, no alert and recording rules.
+alertmanager:
+  enabled: false
+defaultRules:
+  create: false
+
+# Per-node hardware metrics: kind has one node, and per-pod CPU and memory
+# come from the kubelet (cAdvisor) anyway.
+nodeExporter:
+  enabled: false
+
+# Control-plane components that kind does not expose to Prometheus; scraping
+# them would only produce errors.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# The API server's own metrics are very large; scraping them was the biggest
+# single source of load. Cluster DNS metrics are not needed either.
+kubeApiServer:
+  enabled: false
+coreDns:
+  enabled: false
+
+# Deployment and pod state as metrics. Not needed: the number of workers is
+# counted from the workers' own metrics.
+kubeStateMetrics:
+  enabled: false
+
+# Keep the kubelet's cAdvisor metrics (CPU and memory per container), but
+# skip its probe statistics.
+kubelet:
+  serviceMonitor:
+    probes: false
+
+prometheus:
+  prometheusSpec:
+    # Default for everything; our own pods are scraped every 5 s
+    # (k8s/monitoring.yaml), so benchmark runs have enough data points.
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    retention: 2d
+    # Pick up PodMonitors and ServiceMonitors from every namespace (ours in
+    # pdfsearch, KEDA's in keda), not only those labelled for this release.
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+
+# No Grafana: its startup repeatedly overloaded this machine. Metrics are
+# explored in Prometheus' own UI (`make prometheus`) and plotted by the
+# benchmark script; ready-made queries are in docs/METRICS.md.
+grafana:
+  enabled: false

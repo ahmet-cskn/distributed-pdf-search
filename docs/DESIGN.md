@@ -49,7 +49,7 @@ flowchart LR
 | KEDA | kind cluster | Scales workers on SQS queue length (0 ↔ N) |
 | Redis | kind cluster (StatefulSet, AOF) | Trigram index, page texts, file status |
 | Query service | kind cluster (Deployment) | HTTP search API + minimal search page |
-| Prometheus + Grafana | kind cluster | Metrics and dashboards |
+| Prometheus | kind cluster | Metrics from workers, API, Redis, KEDA and the kubelet |
 
 ## 3. Ingestion pipeline
 
@@ -213,17 +213,24 @@ All workers write directly to one Redis instance; one query service reads from i
   | keda | `sqs:GetQueueAttributes` on the queue |
 
 - **Secrets:** access keys are created with the AWS CLI (not Terraform, so they never land in Terraform state), stored as Kubernetes Secrets, and never committed. Terraform state is local and git-ignored.
-- **Kubernetes:** local **kind** cluster. Plain YAML manifests for project services; KEDA, Prometheus and Grafana installed via Helm.
+- **Kubernetes:** local **kind** cluster. Plain YAML manifests for project services; KEDA and Prometheus (kube-prometheus-stack) installed via Helm.
 - **Development:** Docker Compose provides a local Redis; moto fakes S3 and SQS in-process for automated tests.
 
 ## 7. Observability
 
-Prometheus scrapes metrics from workers and the query service; Grafana dashboards show:
+Prometheus (kube-prometheus-stack, trimmed to Prometheus and its operator) scrapes, every 5 s:
 
-- Pages and files processed per second
-- Queue length (visible / in flight) and DLQ size
-- Worker replica count
-- Query latency
+| Source | Metrics |
+|---|---|
+| Workers (`/metrics`, port 9100) | jobs by outcome, files and pages indexed, time per job phase (receive, download, extract, index, delete), busy |
+| Query service (`/metrics`) | requests and latency per route template, search candidates vs. matches, search time per phase (intersect, verify) |
+| Redis (`redis_exporter` sidecar) | commands processed, CPU time, memory |
+| KEDA operator | the queue length it scales on (`keda_scaler_metrics_value`) |
+| kubelet (cAdvisor) | CPU and memory per container |
+
+Labels are bounded (route templates, phases, outcomes), never filenames or raw URLs, to keep the number of time series small.
+
+Grafana was dropped: on the development laptop (8 cores, 5 GB for Docker) its startup repeatedly overloaded the node, and failing health checks turned that into restart loops. Metrics are explored in Prometheus' UI (`make prometheus`) and plotted by the benchmark script.
 
 **Benchmark caveat:** all pods share one laptop, so throughput plateaus around the machine's CPU core count. This is expected and documented with the results.
 
@@ -279,7 +286,7 @@ Prometheus scrapes metrics from workers and the query service; Grafana dashboard
 | 4 | Worker | A manually uploaded PDF becomes searchable |
 | 5 | Watcher | Dropping files into the folder makes them searchable |
 | 6 | kind + KEDA | Dropping 1,000 PDFs scales workers up and back to zero |
-| 7 | Prometheus + Grafana + benchmark | Throughput vs. worker count documented |
+| 7 | Prometheus metrics + benchmark | Throughput vs. worker count documented |
 | 8 | v2: sharded Redis | Query service fans out to N shards; tests still pass |
 
 CI is introduced with milestone 1 and extended as the project grows.

@@ -4,11 +4,12 @@ CLUSTER   := pdfsearch
 NAMESPACE := pdfsearch
 IMAGE     := pdfsearch:dev
 KEDA_VERSION := 2.21.0
+MONITORING_VERSION := 91.9.0
 # Always target the kind cluster explicitly, never whatever kubectl's current
 # context happens to be (it could be another cluster).
 KUBECTL   := kubectl --context kind-$(CLUSTER)
 
-.PHONY: help cluster cluster-delete image keda deploy restart worker-secret keda-secret status
+.PHONY: help cluster cluster-delete image monitoring keda deploy restart worker-secret keda-secret prometheus status
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -25,7 +26,7 @@ image: ## Build the Docker image and load it into the cluster
 	docker build -t $(IMAGE) .
 	kind load docker-image $(IMAGE) --name $(CLUSTER)
 
-deploy: k8s/aws.env ## Apply all Kubernetes manifests in k8s/ (needs `make keda` first)
+deploy: k8s/aws.env ## Apply all Kubernetes manifests in k8s/ (needs `make monitoring keda` first)
 	$(KUBECTL) apply -k k8s/
 	@# Generous timeout: after a restart, Redis replays its append-only file
 	@# before it is ready, which took ~2.5 minutes for ~1,000 indexed PDFs.
@@ -64,10 +65,21 @@ worker-secret: ## Store the pdfsearch-worker AWS key as a Kubernetes Secret
 keda-secret: ## Store the pdfsearch-keda AWS key as a Kubernetes Secret
 	$(call aws_secret,keda)
 
-keda: ## Install KEDA (the autoscaler) into the cluster
+monitoring: ## Install Prometheus (kube-prometheus-stack)
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update >/dev/null
+	helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+		--version $(MONITORING_VERSION) --values k8s/helm/monitoring-values.yaml \
+		--kube-context kind-$(CLUSTER) --namespace monitoring --create-namespace --wait
+
+keda: ## Install KEDA (the autoscaler) into the cluster (needs `make monitoring` first)
 	helm repo add kedacore https://kedacore.github.io/charts --force-update >/dev/null
 	helm upgrade --install keda kedacore/keda --version $(KEDA_VERSION) \
+		--values k8s/helm/keda-values.yaml \
 		--kube-context kind-$(CLUSTER) --namespace keda --create-namespace --wait
+
+prometheus: ## Open Prometheus at http://localhost:9090
+	@echo "Prometheus at http://localhost:9090 (Ctrl+C to stop)"
+	@$(KUBECTL) -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null
 
 status: ## Show the pods in the pdfsearch namespace
 	$(KUBECTL) -n $(NAMESPACE) get pods -o wide
