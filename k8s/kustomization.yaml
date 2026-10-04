@@ -1,0 +1,7 @@
+# Everything that `make deploy` applies, all in the pdfsearch namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pdfsearch
+resources:
+  - namespace.yaml
+  - redis.yaml
