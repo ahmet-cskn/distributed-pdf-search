@@ -64,3 +64,8 @@ def test_command(tmp_path, capsys):
 def test_command_rejects_invalid_page_range(tmp_path):
     with pytest.raises(SystemExit):
         main([str(tmp_path), "--min-pages", "5", "--max-pages", "2"])
+
+
+def test_prefix_tells_batches_apart(tmp_path):
+    main([str(tmp_path), "--count", "2", "--max-pages", "5", "--prefix", "batch2-"])
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["batch2-0000.pdf", "batch2-0001.pdf"]

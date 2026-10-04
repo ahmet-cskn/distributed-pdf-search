@@ -27,7 +27,9 @@ image: ## Build the Docker image and load it into the cluster
 
 deploy: k8s/aws.env ## Apply all Kubernetes manifests in k8s/ (needs `make keda` first)
 	$(KUBECTL) apply -k k8s/
-	$(KUBECTL) -n $(NAMESPACE) rollout status statefulset/redis --timeout=120s
+	@# Generous timeout: after a restart, Redis replays its append-only file
+	@# before it is ready, which took ~2.5 minutes for ~1,000 indexed PDFs.
+	$(KUBECTL) -n $(NAMESPACE) rollout status statefulset/redis --timeout=600s
 	$(KUBECTL) -n $(NAMESPACE) rollout status deployment/api --timeout=120s
 	$(KUBECTL) -n $(NAMESPACE) rollout status deployment/worker --timeout=120s
 

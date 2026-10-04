@@ -88,6 +88,29 @@ Copy PDFs into `inbox/`; they become searchable within seconds. The watcher uplo
 
 Worker and watcher stop gracefully on Ctrl+C (press twice to stop immediately). See `pdfsearch.worker.main` and `pdfsearch-watch --help` for all settings.
 
+## Run on Kubernetes with autoscaling
+
+Redis, the query service and the workers run in a local [kind](https://kind.sigs.k8s.io/) cluster; [KEDA](https://keda.sh/) scales the workers between 0 and 8 based on the SQS queue length. The watcher stays on the host. Requirements: kind, kubectl, Helm, and the AWS setup and CLI profiles from the previous sections (including one for `pdfsearch-keda`).
+
+```bash
+make cluster          # create the kind cluster
+make keda             # install KEDA
+make image            # build the Docker image and load it into the cluster
+make worker-secret    # AWS keys from the pdfsearch-worker / pdfsearch-keda
+make keda-secret      #   profiles, stored as Kubernetes Secrets
+make deploy           # Redis, API, worker and the scaling rule
+```
+
+The search page is at http://localhost:8080. Start the watcher as above, then drop a large batch of generated PDFs into the inbox and watch the workers scale up, and back to zero once the queue is empty:
+
+```bash
+kubectl --context kind-pdfsearch -n pdfsearch get pods -l app=worker -w
+
+uv run pdfsearch-generate inbox --count 1000 --prefix batch-
+```
+
+`make help` lists all targets; `make restart` rebuilds the image and rolls out new pods after a code change.
+
 ## Development
 
 ```bash

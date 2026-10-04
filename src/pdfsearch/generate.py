@@ -83,15 +83,16 @@ def generate(
     max_pages: int = 40,
     words_per_page: int = 250,
     seed: int = 0,
+    prefix: str = "generated-",
 ) -> list[Path]:
-    """Create count PDFs named generated-NNNN.pdf in folder; return their paths."""
+    """Create count PDFs named <prefix>NNNN.pdf in folder; return their paths."""
     rng = random.Random(seed)
     folder.mkdir(parents=True, exist_ok=True)
     paths = []
     for i in range(count):
         texts = page_texts(rng, rng.randint(min_pages, max_pages), words_per_page)
         texts[0] = f"Generated document {i:04}\n\n{texts[0]}"
-        path = folder / f"generated-{i:04}.pdf"
+        path = folder / f"{prefix}{i:04}.pdf"
         write_pdf(path, texts)
         paths.append(path)
     return paths
@@ -107,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-pages", type=int, default=5, help="default: 5")
     parser.add_argument("--max-pages", type=int, default=40, help="default: 40")
     parser.add_argument("--seed", type=int, default=0, help="same seed, same text (default: 0)")
+    parser.add_argument(
+        "--prefix",
+        default="generated-",
+        help="filename prefix, e.g. to tell batches apart (default: generated-)",
+    )
     args = parser.parse_args(argv)
     if not 1 <= args.min_pages <= args.max_pages:
         parser.error("need 1 <= --min-pages <= --max-pages")
@@ -118,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         min_pages=args.min_pages,
         max_pages=args.max_pages,
         seed=args.seed,
+        prefix=args.prefix,
     )
     elapsed = time.perf_counter() - start
     pages = sum(pymupdf.open(p).page_count for p in paths)

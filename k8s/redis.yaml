@@ -56,8 +56,9 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
-              # The index for ~1,000 PDFs needs a few hundred MB.
-              memory: 1Gi
+              # The index for ~1,000 PDFs measured ~690 MB (docs/DESIGN.md §9);
+              # rewriting the AOF file needs temporary extra memory on top.
+              memory: 2Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
