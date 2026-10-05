@@ -182,6 +182,12 @@ class Prometheus:
         with urllib.request.urlopen(url, timeout=10) as response:
             return json.load(response)["data"]["result"]
 
+    def query_range(self, promql: str, start: float, end: float, step: float) -> list[dict]:
+        params = urllib.parse.urlencode({"query": promql, "start": start, "end": end, "step": step})
+        url = f"http://localhost:{PROMETHEUS_PORT}/api/v1/query_range?{params}"
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return json.load(response)["data"]["result"]
+
     def scalar(self, promql: str, at: float) -> float:
         result = self.query(promql, at)
         return float(result[0]["value"][1]) if result else 0.0
@@ -307,6 +313,14 @@ TEXT = "#0b0b0b"
 TEXT_SECONDARY = "#52514e"
 GRID = "#e4e3df"
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]
+STYLE = {
+    "font.size": 10,
+    "text.color": TEXT,
+    "axes.labelcolor": TEXT_SECONDARY,
+    "axes.edgecolor": GRID,
+    "xtick.color": TEXT_SECONDARY,
+    "ytick.color": TEXT_SECONDARY,
+}
 
 
 def plot(rows: list[dict], path: Path) -> None:
@@ -318,16 +332,7 @@ def plot(rows: list[dict], path: Path) -> None:
     workers = [int(r["workers"]) for r in rows]
     throughput = [r["pages_per_s"] for r in rows]
 
-    plt.rcParams.update(
-        {
-            "font.size": 10,
-            "text.color": TEXT,
-            "axes.labelcolor": TEXT_SECONDARY,
-            "axes.edgecolor": GRID,
-            "xtick.color": TEXT_SECONDARY,
-            "ytick.color": TEXT_SECONDARY,
-        }
-    )
+    plt.rcParams.update(STYLE)
     fig, (left, right) = plt.subplots(1, 2, figsize=(12, 4.2), facecolor=SURFACE)
     for ax in (left, right):
         ax.set_facecolor(SURFACE)

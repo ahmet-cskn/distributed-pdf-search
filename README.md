@@ -110,6 +110,8 @@ kubectl --context kind-pdfsearch -n pdfsearch get pods -l app=worker -w
 uv run pdfsearch-generate inbox --count 1000 --prefix batch-
 ```
 
+Once the workers are back at zero, `uv run python scripts/autoscaling.py` charts the run from Prometheus (queue length, workers and throughput over time) into `docs/benchmark/autoscaling.png`.
+
 `make help` lists all targets; `make restart` rebuilds the image and rolls out new pods after a code change; `make prometheus` opens Prometheus at http://localhost:9090; [docs/METRICS.md](docs/METRICS.md) has ready-made queries.
 
 ## Benchmark
