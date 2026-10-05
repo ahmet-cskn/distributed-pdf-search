@@ -43,7 +43,10 @@ spec:
         - name: redis
           image: redis:8-alpine
           # Append-only file: every write is logged to /data and replayed on restart.
-          args: ["redis-server", "--appendonly", "yes"]
+          # Snapshots (on by default) are turned off: the AOF already persists
+          # everything, and during indexing a snapshot was taken every minute,
+          # each forking Redis and writing the whole index to disk again.
+          args: ["redis-server", "--appendonly", "yes", "--save", ""]
           ports:
             - name: redis
               containerPort: 6379

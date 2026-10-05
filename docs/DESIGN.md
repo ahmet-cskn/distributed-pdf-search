@@ -147,7 +147,7 @@ Queries whose normalized form is shorter than 3 characters are rejected.
 
 - Page id: `<file>#<page>`, page numbers 1-based. Parsed by splitting on the **last** `#` (filenames may contain `#`).
 - Status changes update `file:<file>` and move the filename between `files:<status>` sets in one `MULTI` transaction.
-- Persistence: **AOF** enabled.
+- Persistence: **AOF** enabled; periodic RDB snapshots disabled. Redis takes snapshots by default, and while indexing a large batch it took one every minute: each forks Redis and writes the whole index to disk, which ran the 5 GB laptop cluster out of memory.
 
 ### 4.4 Write path (per page)
 
