@@ -1,7 +1,7 @@
 """Chart of one autoscaling run: queue length, workers and throughput over time.
 
-Run it after dropping a batch of PDFs into the inbox (README, "Run on
-Kubernetes"), once the workers are back at zero. It looks for the most recent
+Run it after dropping a batch of PDFs into the inbox (docs/SETUP.md, "Run
+on Kubernetes"), once the workers are back at zero. It looks for the most recent
 period of activity (jobs in the queue or workers running) in Prometheus and
 plots it, from a minute before it starts to a minute after it ends.
 
