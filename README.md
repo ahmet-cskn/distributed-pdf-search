@@ -9,8 +9,6 @@
 
 ## Demo
 
-<!-- Demo video: uploaded through GitHub's README editor -->
-
 Below is a live demo of the application on my own MacBook Air M1, at 8x speed. Here is a walkthrough of what happens (I will call the top left, top right, bottom left, and bottom right terminals window 1, 2, 3, and 4 for simplicity):
 
 1. In window 4, I run a command that generates 300 PDFs at once in the folder being watched.
@@ -19,6 +17,8 @@ Below is a live demo of the application on my own MacBook Air M1, at 8x speed. H
 4. The PDFs start being processed by the single worker. The “processing” file count alternates between 0 and 1, as observed in window 3.
 5. Shortly after, the worker count scales up to 4 workers, and multiple files start being processed at once (I set the worker limit to 4 workers due to hardware constraints of my MacBook).
 6. As the queue shrinks, KEDA scales the workers back down, step by step after a short delay, until none are left.
+
+https://github.com/user-attachments/assets/4b236731-b8cf-4f6f-9e46-71596f9dd3a4
 
 ## Architecture
 
