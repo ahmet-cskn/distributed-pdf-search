@@ -1,4 +1,4 @@
-# scalable-pdf-manager
+# Distributed PDF Search
 
 [![CI](https://github.com/ahmet-cskn/scalable-pdf-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmet-cskn/scalable-pdf-manager/actions/workflows/ci.yml)
 
@@ -60,10 +60,10 @@ Every page is split into overlapping three-letter chunks (trigrams). For instanc
 
 ## Handling scale and failure
 
-- **No job is lost.** A worker only *hides* a job while it works on it and deletes it once the page index is written. If the worker crashes, the job reappears and another worker takes it. For long PDFs the worker keeps extending the hiding time, so no second worker starts on the same file.
-- **Duplicates are harmless.** S3 events and SQS deliver *at least once*, so a file can occasionally be processed twice. The index writes are idempotent (adding a page to a set twice changes nothing), which is simpler and more robust than trying to guarantee exactly-once processing.
+- **No job is lost.** A worker only hides a job while it works on it and deletes it once the page index is written. If the worker crashes, the job reappears and another worker takes it. For long PDFs the worker keeps extending the hiding time, so no second worker starts on the same file.
+- **Duplicates are harmless.** S3 events and SQS deliver at least once, so a file can occasionally be processed twice. The index writes are idempotent (adding a page to a set twice changes nothing), which is simpler and more robust than trying to guarantee exactly once processing.
 - **Broken files don't block the queue.** After 3 failed attempts SQS moves a job to a dead-letter queue, and the file is marked as failed.
-- **Elastic and graceful.** Workers are stateless and scale between 0 and 8. When Kubernetes removes one, it finishes its current file first.
+- **Elastic and graceful.** Workers are stateless and scale between 0 and 8 (though a smaller worker count limit can be chosen. I chose the limit to be 4 in my demo run, due to my laptop's capabilities). When Kubernetes removes one, it finishes its current file first.
 - **Least privilege.** Each component has its own AWS identity with only the permissions it needs: the watcher can upload but not read the queue, KEDA can only read the queue length.
 
 ## Results
@@ -93,9 +93,6 @@ What the measurements show:
 
 - **The workers are not slowed down by the database.** Redis used at most 30% of one CPU core and would only become the limit at around 600 pages per second. Splitting the index across several Redis instances was planned, but the numbers showed it would not help yet, so it was not built.
 - **The limit is the laptop.** Beyond 3 workers they compete for the M1's 4 fast CPU cores, which is why the curve flattens. On separate machines, adding workers should keep adding speed until Redis' limit of around 600 pages per second.
-- **A bug found under load.** With 1,000 PDFs the laptop ran out of memory: Redis was saving a full copy of the index to disk every minute, on top of its log that already kept the data safe. Turning off those copies fixed it.
-
-The full analysis is in [docs/DESIGN.md §9](docs/DESIGN.md#9-capacity-estimates).
 
 ## Tech stack
 
