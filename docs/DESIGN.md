@@ -49,7 +49,7 @@ flowchart LR
 | KEDA | kind cluster | Scales workers on SQS queue length (0 ↔ N) |
 | Redis | kind cluster (StatefulSet, AOF) | Trigram index, page texts, file status |
 | Query service | kind cluster (Deployment) | HTTP search API + minimal search page |
-| Prometheus + Grafana | kind cluster | Metrics and dashboards |
+| Prometheus | kind cluster | Metrics from workers, API, Redis, KEDA and the kubelet |
 
 ## 3. Ingestion pipeline
 
@@ -147,7 +147,7 @@ Queries whose normalized form is shorter than 3 characters are rejected.
 
 - Page id: `<file>#<page>`, page numbers 1-based. Parsed by splitting on the **last** `#` (filenames may contain `#`).
 - Status changes update `file:<file>` and move the filename between `files:<status>` sets in one `MULTI` transaction.
-- Persistence: **AOF** enabled.
+- Persistence: **AOF** enabled; periodic RDB snapshots disabled. Redis takes snapshots by default, and while indexing a large batch it took one every minute: each forks Redis and writes the whole index to disk, which ran the 5 GB laptop cluster out of memory.
 
 ### 4.4 Write path (per page)
 
@@ -197,7 +197,7 @@ All workers write directly to one Redis instance; one query service reads from i
 - The query service fans out each query to all shards in parallel; each shard runs steps 3–5 of §4.5 locally; results are merged and sorted.
 - **Why not Redis Cluster:** it partitions keys by key hash, i.e. by trigram. `SINTER` across keys on different nodes fails (`CROSSSLOT`), and verification would need page text from other nodes. Partitioning by document keeps every query step shard-local.
 - **Limitation:** changing N requires re-indexing.
-- **Motivation:** write throughput (a single Redis becomes the bottleneck with enough workers) and fault isolation — not storage size.
+- **Motivation:** write throughput (a single Redis becomes the bottleneck with enough workers) and fault isolation — not storage size. Measured (§9): one Redis core would only limit indexing at roughly 600 pages/s, about 3× what 6 workers reached on the development laptop.
 
 ## 6. Infrastructure and deployment
 
@@ -213,19 +213,26 @@ All workers write directly to one Redis instance; one query service reads from i
   | keda | `sqs:GetQueueAttributes` on the queue |
 
 - **Secrets:** access keys are created with the AWS CLI (not Terraform, so they never land in Terraform state), stored as Kubernetes Secrets, and never committed. Terraform state is local and git-ignored.
-- **Kubernetes:** local **kind** cluster. Plain YAML manifests for project services; KEDA, Prometheus and Grafana installed via Helm.
+- **Kubernetes:** local **kind** cluster. Plain YAML manifests for project services; KEDA and Prometheus (kube-prometheus-stack) installed via Helm.
 - **Development:** Docker Compose provides a local Redis; moto fakes S3 and SQS in-process for automated tests.
 
 ## 7. Observability
 
-Prometheus scrapes metrics from workers and the query service; Grafana dashboards show:
+Prometheus (kube-prometheus-stack, trimmed to Prometheus and its operator) scrapes, every 5 s:
 
-- Pages and files processed per second
-- Queue length (visible / in flight) and DLQ size
-- Worker replica count
-- Query latency
+| Source | Metrics |
+|---|---|
+| Workers (`/metrics`, port 9100) | jobs by outcome, files and pages indexed, time per job phase (receive, download, extract, index, delete), busy |
+| Query service (`/metrics`) | requests and latency per route template, search candidates vs. matches, search time per phase (intersect, verify) |
+| Redis (`redis_exporter` sidecar) | commands processed, CPU time, memory |
+| KEDA operator | the queue length it scales on (`keda_scaler_metrics_value`) |
+| kubelet (cAdvisor) | CPU and memory per container |
 
-**Benchmark caveat:** all pods share one laptop, so throughput plateaus around the machine's CPU core count. This is expected and documented with the results.
+Labels are bounded (route templates, phases, outcomes), never filenames or raw URLs, to keep the number of time series small.
+
+Grafana was dropped: on the development laptop (8 cores, 5 GB for Docker) its startup repeatedly overloaded the node, and failing health checks turned that into restart loops. Metrics are explored in Prometheus' UI (`make prometheus`), with ready-made queries in [METRICS.md](METRICS.md), and plotted by the benchmark script.
+
+**Benchmark caveat:** all pods share one laptop, so throughput flattens once the work exceeds its 4 performance cores; see §9 for the measurements and their analysis.
 
 ## 8. Testing strategy
 
@@ -239,21 +246,34 @@ Prometheus scrapes metrics from workers and the query service; Grafana dashboard
 
 ## 9. Capacity estimates
 
-| Quantity | Initial estimate | Measured (1,033 PDFs, ~22,700 pages) |
+| Quantity | Initial estimate | Measured (generated PDFs) |
 |---|---|---|
 | PDFs | ~1,000 | 1,033 |
-| Pages | ~30,000 | ~22,700 |
+| Pages | ~30,000 | ~22,700 (~22 per PDF) |
 | Normalized text | ~90 MB | — |
-| Index size (Redis memory) | a few hundred MB | **686 MB** |
-| Extraction | ~10–50 ms/page → ~5–25 min on one core | 138 pages/s in one local process (generated PDFs) |
-| Index writes | ~1,500 unique trigrams/page → ~45M `SADD` members, ~1 min of Redis time pipelined | — |
-| End-to-end, 8 workers on one laptop | — | ~60 pages/s (1,000 PDFs in ~6 min) |
+| Index size (Redis memory) | a few hundred MB | **686 MB** for the 1,033 PDFs |
+| Extraction | ~10–50 ms/page → ~5–25 min on one core (the bottleneck) | **~1 ms/page** in a worker — not the bottleneck |
+| Index writes | ~1,500 unique trigrams/page → ~45M `SADD` members, ~1 min of Redis time pipelined | ~750 unique trigrams/page; 2.2 µs per `SADD` → ~1.7 ms of Redis time per page |
+| Throughput, 1 worker | — | 53 pages/s (benchmark, median of 3 runs) |
+| Throughput, 6 workers | — | 186 pages/s, 3.5× of 1 worker |
+| End-to-end demo, 8 workers, no Prometheus | — | ~60 pages/s (1,000 PDFs in ~6 min, milestone 6) |
 
-**Index size.** Most of the memory is in the trigram sets: every page id is stored as a full string (`batch-0500.pdf#12`, ~20 bytes) in each of its pages' ~1,500 trigram sets, i.e. tens of millions of set members. Storing short integer page ids instead (with one mapping from id to `<file>#<page>`) would shrink the sets several-fold and let Redis use its compact integer-set encoding. Until then, Redis in Kubernetes has a 2 GiB memory limit, which also leaves room for the temporary extra memory of rewriting the AOF file.
+**Index size.** Most of the memory is in the trigram sets: every page id is stored as a full string (`batch-0500.pdf#12`, ~20 bytes) in each of its page's ~750 trigram sets, i.e. tens of millions of set members. Storing short integer page ids instead (with one mapping from id to `<file>#<page>`) would shrink the sets several-fold and let Redis use its compact integer-set encoding. Until then, Redis in Kubernetes has a 2 GiB memory limit, which also leaves room for the temporary extra memory of rewriting the AOF file.
 
 **Restart time.** On startup Redis loads its last snapshot and then replays every write logged since. Right after indexing the 1,000-PDF batch, that replay took ~140 s (the snapshot itself loaded in ~4 s); after Redis compacted the log, a restart took ~30 s. Restart time therefore depends on how much was written since the last compaction, which Redis triggers automatically as the log grows.
 
-**Throughput.** 8 workers together were slower per worker than the single-process baseline. Candidate causes (CPU contention on one machine, a single Redis serializing all writes, per-job network round trips to `eu-north-1`) are to be separated with the metrics of milestone 7.
+**Throughput** (benchmark: `scripts/benchmark.py`, results in [`docs/benchmark/`](benchmark/), how to run it in [SETUP.md](SETUP.md#benchmark)). Each run queues the same 150 generated PDFs (3,183 pages) before exactly N workers start, so upload speed and autoscaling delay are excluded; the reported values are medians of 3 runs. Throughput rises from 53 pages/s (1 worker) to 186 pages/s (6 workers): near-linear up to 3 workers, 3.5× at 6. The per-phase metrics explain the shape:
+
+- *Workers are I/O-bound.* With one worker, receiving a job, downloading the PDF and deleting the job take ~12 of ~18.5 ms per page, all round trips to `eu-north-1`. Text extraction takes ~1 ms per page; the initial estimate that extraction would dominate was wrong for these PDFs.
+- *Redis is not the bottleneck.* Its server time is ~1.7 ms per page (~750 `SADD`s at 2.2 µs) and it used at most 0.3 of its single core. One Redis core would cap indexing at roughly 600 pages/s, so sharding (milestone 8) only becomes necessary well above the throughput reached here.
+- *The laptop's CPU limits scaling.* Worker CPU time per page is flat at ~6 ms for 1–3 workers and doubles to ~12 ms at 6. The Apple M1 has 4 performance and 4 efficiency cores, shared with Redis, Prometheus and Kubernetes; beyond about 3 workers, work runs on the slower efficiency cores. The `index` phase grows most (5.8 → 12.8 ms per page) because it is mostly CPU work in the worker: normalizing and splitting a page into trigrams takes ~0.3 ms, and the Redis client encoding ~750 commands and parsing their replies most of the rest.
+- *Memory sets the hard limit.* With Prometheus running, 8 workers no longer fit in Docker's 5 GB: the node starts swapping, health checks fail and components restart.
+
+The ~60 pages/s of the 8-worker demo in milestone 6 is consistent with this: 8 workers there competed for the 4 fast cores, and Redis held the growing ~700 MB index next to them on a node with little free memory. That run was not instrumented, so this explanation is not measured.
+
+Limits of these numbers: one laptop shared by all components; generated PDFs (real PDFs with images or complex layouts extract more slowly); CPU averages include a ~15 s tail after each run, which slightly lowers them; single-run outliers occur (kept in `runs.csv`, e.g. a 4-worker run at 102 pages/s), hence medians.
+
+Likely next improvements, each measurable with the same benchmark: fewer AWS round trips per job (receive up to 10 messages at once, batch deletes), a faster Redis client parser (`hiredis`), and integer page ids (fewer bytes to encode, send and store per `SADD`).
 
 ## 10. Technology choices
 
@@ -279,7 +299,7 @@ Prometheus scrapes metrics from workers and the query service; Grafana dashboard
 | 4 | Worker | A manually uploaded PDF becomes searchable |
 | 5 | Watcher | Dropping files into the folder makes them searchable |
 | 6 | kind + KEDA | Dropping 1,000 PDFs scales workers up and back to zero |
-| 7 | Prometheus + Grafana + benchmark | Throughput vs. worker count documented |
+| 7 | Prometheus metrics + benchmark | Throughput vs. worker count documented |
 | 8 | v2: sharded Redis | Query service fans out to N shards; tests still pass |
 
 CI is introduced with milestone 1 and extended as the project grows.

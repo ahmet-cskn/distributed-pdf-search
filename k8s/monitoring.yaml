@@ -1,0 +1,39 @@
+# What Prometheus scrapes in this namespace. A PodMonitor selects pods by
+# label and names the port that serves /metrics. Requires `make monitoring`.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: worker
+spec:
+  selector:
+    matchLabels:
+      app: worker
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 5s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: api
+spec:
+  selector:
+    matchLabels:
+      app: api
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 5s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: redis
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  podMetricsEndpoints:
+    # The redis-exporter sidecar, not Redis itself.
+    - port: metrics
+      interval: 5s

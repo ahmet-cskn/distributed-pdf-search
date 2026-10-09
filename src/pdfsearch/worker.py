@@ -8,10 +8,18 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import boto3
+from prometheus_client import (
+    Counter,
+    Gauge,
+    Histogram,
+    disable_created_metrics,
+    start_http_server,
+)
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
@@ -23,6 +31,27 @@ from pdfsearch.runtime import configure_logging, install_signal_handlers
 from pdfsearch.status import FileStatus, set_status
 
 log = logging.getLogger(__name__)
+
+# --- Metrics (scraped by Prometheus from /metrics, see main()) ---------------
+
+JOBS = Counter(
+    "pdfsearch_worker_jobs",
+    "Processed job messages by outcome: done, skipped (no PDF, e.g. S3's test "
+    "event), retry (failed, will be redelivered), failed (final attempt), "
+    "invalid (not an S3 event), error (unexpected, e.g. delete failed).",
+    ["outcome"],
+)
+FILES = Counter("pdfsearch_worker_files_indexed", "PDF files indexed.")
+PAGES = Counter("pdfsearch_worker_pages_indexed", "PDF pages indexed.")
+PHASE_SECONDS = Histogram(
+    "pdfsearch_worker_phase_seconds",
+    "Time per job spent in each phase: receive (only receives that returned "
+    "a job), download (from S3), extract (PyMuPDF), index (Redis writes), "
+    "delete (from SQS).",
+    ["phase"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
+)
+BUSY = Gauge("pdfsearch_worker_busy", "1 while the worker is processing a job, else 0.")
 
 
 @dataclass
@@ -49,6 +78,7 @@ class Worker:
         """
         log.info("worker started, receiving from %s", self.queue_url)
         while not stop.is_set():
+            start = time.perf_counter()
             try:
                 response = self.sqs.receive_message(
                     QueueUrl=self.queue_url,
@@ -60,8 +90,12 @@ class Worker:
                 log.exception("receiving from the queue failed; retrying")
                 stop.wait(self.error_backoff_seconds)
                 continue
+            messages = response.get("Messages", [])
+            if messages:
+                # Empty receives are idle time (long polling), not job work.
+                PHASE_SECONDS.labels("receive").observe(time.perf_counter() - start)
 
-            for message in response.get("Messages", []):
+            for message in messages:
                 if stop.is_set():
                     # Received while shutting down: hand it back right away
                     # instead of letting it wait out the visibility timeout.
@@ -71,6 +105,7 @@ class Worker:
                     self.process(message)
                 except Exception:
                     # E.g. deleting the message failed. It will be redelivered.
+                    JOBS.labels("error").inc()
                     log.exception("unexpected error processing message %s", message["MessageId"])
         log.info("worker stopped")
 
@@ -95,6 +130,11 @@ class Worker:
         The message must have been received with the ApproximateReceiveCount
         system attribute.
         """
+        with BUSY.track_inprogress():
+            JOBS.labels(self._process(message)).inc()
+
+    def _process(self, message: dict) -> str:
+        """Handle one message; return its outcome for the jobs metric."""
         receive_count = int(message.get("Attributes", {}).get("ApproximateReceiveCount", 1))
         final_attempt = receive_count >= self.max_receive_count
 
@@ -104,7 +144,7 @@ class Worker:
             # Retrying cannot fix it; leaving it lets it end up in the DLQ
             # for inspection.
             log.exception("invalid job message %s", message["MessageId"])
-            return
+            return "invalid"
 
         with VisibilityHeartbeat(
             self.sqs,
@@ -125,13 +165,25 @@ class Worker:
                     )
                     if final_attempt:
                         self._mark_failed(obj.key)
-                    return
+                        return "failed"
+                    return "retry"
 
+        start = time.perf_counter()
         self.sqs.delete_message(QueueUrl=self.queue_url, ReceiptHandle=message["ReceiptHandle"])
+        PHASE_SECONDS.labels("delete").observe(time.perf_counter() - start)
+        return "done" if objects else "skipped"
 
     def _index(self, obj: S3Object) -> None:
+        start = time.perf_counter()
         pdf = self.s3.get_object(Bucket=obj.bucket, Key=obj.key)["Body"].read()
-        pages = index_file(self.redis, obj.key, pdf)
+        PHASE_SECONDS.labels("download").observe(time.perf_counter() - start)
+
+        timings: dict[str, float] = {}
+        pages = index_file(self.redis, obj.key, pdf, timings=timings)
+        for phase, seconds in timings.items():
+            PHASE_SECONDS.labels(phase).observe(seconds)
+        FILES.inc()
+        PAGES.inc(pages)
         log.info("indexed %s (%d pages)", obj.key, pages)
 
     def _mark_failed(self, file: str) -> None:
@@ -152,6 +204,7 @@ def main() -> int:
         MAX_RECEIVE_COUNT   must match the queue's redrive policy (default 3)
         VISIBILITY_TIMEOUT  seconds a message stays hidden per extension (default 300)
         HEARTBEAT_INTERVAL  seconds between extensions (default 60)
+        METRICS_PORT        port of the Prometheus /metrics endpoint (default 9100)
         LOG_LEVEL           default INFO
     """
     configure_logging()
@@ -177,6 +230,12 @@ def main() -> int:
         visibility_timeout=int(os.environ.get("VISIBILITY_TIMEOUT", 300)),
         heartbeat_interval=float(os.environ.get("HEARTBEAT_INTERVAL", 60)),
     )
+    metrics_port = int(os.environ.get("METRICS_PORT", 9100))
+    # Skip the extra *_created series per counter; nothing uses them.
+    disable_created_metrics()
+    start_http_server(metrics_port)
+    log.info("serving metrics on port %d", metrics_port)
+
     stop = threading.Event()
     install_signal_handlers(stop)
     worker.run(stop)

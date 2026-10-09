@@ -31,6 +31,9 @@ spec:
           image: pdfsearch:dev
           imagePullPolicy: IfNotPresent
           command: ["pdfsearch-worker"]
+          ports:
+            - name: metrics
+              containerPort: 9100
           env:
             - name: REDIS_URL
               value: redis://redis:6379/0

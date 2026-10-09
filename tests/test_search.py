@@ -1,7 +1,7 @@
 import pytest
 
 from pdfsearch.index import index_page
-from pdfsearch.search import PageMatch, QueryTooShortError, search
+from pdfsearch.search import PageMatch, QueryTooShortError, SearchStats, search
 
 
 def test_example_from_spec(redis):
@@ -63,3 +63,21 @@ def test_three_characters_is_enough(redis):
 def test_too_short_after_normalization(redis, query):
     with pytest.raises(QueryTooShortError):
         search(redis, query)
+
+
+def test_stats_count_false_positives(redis):
+    # Same setup as test_false_positive_is_filtered_out: 1 candidate, 0 matches.
+    index_page(redis, "a.pdf", 1, "abcd xcde")
+    stats = SearchStats()
+
+    assert search(redis, "abcde", stats=stats) == []
+
+    assert (stats.candidates, stats.matches) == (1, 0)
+    assert stats.intersect_seconds > 0
+    assert stats.verify_seconds > 0
+
+
+def test_stats_without_candidates(redis):
+    stats = SearchStats()
+    search(redis, "nothing", stats=stats)
+    assert (stats.candidates, stats.matches, stats.verify_seconds) == (0, 0, 0)

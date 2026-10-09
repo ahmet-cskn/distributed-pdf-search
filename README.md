@@ -1,125 +1,124 @@
-# scalable-pdf-manager
+# Distributed PDF Search
 
 [![CI](https://github.com/ahmet-cskn/scalable-pdf-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmet-cskn/scalable-pdf-manager/actions/workflows/ci.yml)
 
-Distributed PDF indexing and substring search.
+- Drop PDFs into a folder and search their full text, quickly and reliably.
+- The app uses a distributed pipeline with Kubernetes, Amazon S3 and SQS for processing large loads of PDFs being dropped to the folder at once.
+- Once the PDFs are processed, the user can search for any string they like, and the PDFs in which the string appears as a substring and the page numbers are returned instantly.
+- The querying mechanism uses a trigram-based technique to efficiently and swiftly fetch the relevant pages.
 
-Drop a batch of PDFs into a folder: they are uploaded to Amazon S3, queued through Amazon SQS, and processed by an autoscaling pool of Kubernetes workers that extract each page's text into a Redis trigram index. A query service then returns every `(file, page)` whose text contains a given string.
+## Demo
 
-**Stack:** Python · Amazon S3 · Amazon SQS · Redis · Kubernetes (kind) · KEDA · Terraform · FastAPI · Prometheus · Grafana
+<!-- Demo video: uploaded through GitHub's README editor -->
 
-> Work in progress. See [docs/DESIGN.md](docs/DESIGN.md) for the full design.
+Below is a live demo of the application on my own MacBook Air M1, at 8x speed. Here is a walkthrough of what happens (I will call the top left, top right, bottom left, and bottom right terminals window 1, 2, 3, and 4 for simplicity):
 
-## Run locally
+1. In window 4, I run a command that generates 300 PDFs at once in the folder being watched.
+2. The watcher uploads the PDFs to S3, as observed in window 1.
+3. As the PDFs are being uploaded, a worker spawns, as observed in window 2.
+4. The PDFs start being processed by the single worker. The “processing” file count alternates between 0 and 1, as observed in window 3.
+5. Shortly after, the worker count scales up to 4 workers, and multiple files start being processed at once (I set the worker limit to 4 workers due to hardware constraints of my MacBook).
+6. As the queue shrinks, KEDA scales the workers back down, step by step after a short delay, until none are left.
 
-Requirements: [uv](https://docs.astral.sh/uv/) and Docker.
+## Architecture
 
-```bash
-# Start Redis
-docker compose up -d --wait
-
-# Install dependencies (uv also installs the right Python version)
-uv sync
-
-# Index a folder of PDFs (single process)
-uv run pdfsearch-index path/to/pdfs
-
-# Start the query service, then open http://localhost:8000
-uv run uvicorn pdfsearch.api:app --reload
+```mermaid
+flowchart LR
+    subgraph host["Your machine"]
+        folder["PDF folder"] --> watcher["Watcher"]
+    end
+    subgraph aws["AWS"]
+        s3[("S3 bucket")]
+        sqs[["SQS job queue"]]
+        dlq[["Dead-letter queue"]]
+    end
+    subgraph k8s["Kubernetes"]
+        keda["KEDA autoscaler"]
+        workers["Workers (0–8)"]
+        redis[("Redis index")]
+        api["Search API + page"]
+    end
+    watcher -- "upload" --> s3
+    s3 -- "new-file event" --> sqs
+    sqs -- "one job per PDF" --> workers
+    sqs -- "after 3 failed attempts" --> dlq
+    s3 -- "download" --> workers
+    keda -.->|"watches queue length,<br/>scales workers"| workers
+    workers -- "write pages" --> redis
+    redis --> api
+    browser["Browser"] --> api
 ```
 
-The API is documented interactively at http://localhost:8000/docs.
+1. The watcher notices new PDFs in the folder and uploads them to S3.
+2. For every new file, S3 itself puts a job on an SQS queue. Uploading and processing are fully decoupled. The queue acts as a buffer between uploading and processing.
+3. Workers take one job at a time, download the PDF, extract the text of each page and write it into the Redis index.
+4. KEDA watches the queue length and adds or removes workers.
+5. A file whose upload is complete and indexed by a worker can be queried from the web UI through the Redis index.
 
-| Endpoint | Description |
+**How the search works:**
+Every page is split into overlapping three-letter chunks (trigrams). For instance, “network” contains net, etw, two, wor, ork. Redis has [trigram] : [set of pages containing that trigram] pairs. A query is split the same way and pages that contain all trigrams of the query are selected as candidates. Candidates are scanned to see if they contain the exact text. This method efficiently finds substrings without scanning every page.
+
+## Handling scale and failure
+
+- **No job is lost.** A worker only hides a job while it works on it and deletes it once the page index is written. If the worker crashes, the job reappears and another worker takes it. For long PDFs the worker keeps extending the hiding time, so no second worker starts on the same file.
+- **Duplicates are harmless.** S3 events and SQS deliver at least once, so a file can occasionally be processed twice. The index writes are idempotent (adding a page to a set twice changes nothing), which is simpler and more robust than trying to guarantee exactly once processing.
+- **Broken files don't block the queue.** After 3 failed attempts SQS moves a job to a dead-letter queue, and the file is marked as failed.
+- **Elastic and graceful.** Workers are stateless and scale between 0 and 8 (though a smaller worker count limit can be chosen. I chose the limit to be 4 in my demo run, due to my laptop's capabilities). When Kubernetes removes one, it finishes its current file first.
+- **Least privilege.** Each component has its own AWS identity with only the permissions it needs: the watcher can upload but not read the queue, KEDA can only read the queue length.
+
+## Results
+
+All measurements were taken on a MacBook Air M1, with every component except S3 and SQS running on the laptop.
+
+### Autoscaling
+
+This chart shows the demo run above, measured with Prometheus. Read it from top to bottom:
+
+![Queue length, worker count and throughput over time during the demo](docs/benchmark/autoscaling.png)
+
+- **Top:** as the 300 PDFs are uploaded, jobs pile up in the queue (up to 206 at once), then the workers empty it.
+- **Middle:** KEDA starts 1 worker within seconds and adds more until the limit of 4 is reached. Once the queue is empty, it removes them step by step.
+- **Bottom:** throughput rises with the number of workers, peaking at 178 pages per second. All 6,644 pages were indexed in about 80 seconds.
+
+### More workers, more speed
+
+A benchmark script indexes the same 150 PDFs with 1 to 6 workers (3 runs each, median shown):
+
+![Indexing throughput and time per page by number of workers](docs/benchmark/throughput.png)
+
+- **Left:** throughput grows from 53 pages per second with 1 worker to 186 with 6. The dashed line is perfect scaling (6 workers being 6× as fast); the measured curve stays close to it up to 3 workers and reaches 3.5× at 6.
+- **Right:** where a worker's time per page goes. With 1 worker, about two thirds of it is waiting on the network (receiving the job, downloading the PDF, deleting the job), and extracting the text takes only about 1 ms. With more workers, the `index` phase (preparing the writes to Redis) grows because the workers share the laptop's CPU.
+
+What the measurements show:
+
+- **The workers are not slowed down by the database.** Redis used at most 30% of one CPU core and would only become the limit at around 600 pages per second. Splitting the index across several Redis instances was planned, but the numbers showed it would not help yet, so it was not built.
+- **The limit is the laptop.** Beyond 3 workers they compete for the M1's 4 fast CPU cores, which is why the curve flattens. On separate machines, adding workers should keep adding speed until Redis' limit of around 600 pages per second.
+
+## Tech stack
+
+| Area | Technologies |
 |---|---|
-| `GET /` | Search page |
-| `GET /search?q=<query>` | Pages containing the query (`400` if shorter than 3 characters after normalization) |
-| `GET /status` | Number of files processing, done and failed |
+| Language | Python 3.13 |
+| Frameworks and Libraries | FastAPI, PyMuPDF |
+| AWS | S3, SQS (with dead-letter queue), IAM, Budgets |
+| Orchestration | Kubernetes (kind), KEDA, Helm, Docker |
+| Data | Redis (sets, pipelines, transactions, append-only persistence) |
+| Infrastructure as code | Terraform |
+| Observability | Prometheus |
+| Quality | pytest, ruff, GitHub Actions CI |
 
-## AWS infrastructure
+## Running it yourself
 
-The S3 bucket, SQS queues, IAM users and budget alert are defined with Terraform in [`infra/`](infra/). Requirements: the [AWS CLI](https://aws.amazon.com/cli/) and [Terraform](https://developer.hashicorp.com/terraform/install).
-
-```bash
-aws login --profile <your-profile>      # temporary credentials, no stored keys
-export AWS_PROFILE=<your-profile>
-
-cd infra
-cp terraform.tfvars.example terraform.tfvars   # then set your alert email
-terraform init
-terraform apply
-```
-
-`terraform output` prints the bucket name and queue URLs. Terraform state stays local and is git-ignored.
-
-## Run the pipeline against AWS
-
-Each component has its own least-privilege IAM user. Create access keys for the worker and the watcher once and store them as CLI profiles, without printing the secrets (zsh):
+Index and search a folder of PDFs locally, without AWS (requires [uv](https://docs.astral.sh/uv/) and Docker):
 
 ```bash
-for C in worker watcher; do
-  aws iam create-access-key --user-name pdfsearch-$C --profile <your-profile> \
-    --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text \
-    | read -r KEY SECRET \
-    && aws configure set aws_access_key_id "$KEY" --profile pdfsearch-$C \
-    && aws configure set aws_secret_access_key "$SECRET" --profile pdfsearch-$C \
-    && aws configure set region eu-north-1 --profile pdfsearch-$C
-done; unset KEY SECRET
+docker compose up -d --wait               # Redis
+uv sync                                   # dependencies
+uv run pdfsearch-index path/to/pdfs       # index a folder
+uv run uvicorn pdfsearch.api:app          # search page at http://localhost:8000
 ```
 
-Then run each component in its own terminal (Redis must be running):
-
-```bash
-# 1. Query service: http://localhost:8000
-uv run uvicorn pdfsearch.api:app
-
-# 2. Worker: indexes uploaded PDFs
-AWS_PROFILE=pdfsearch-worker \
-QUEUE_URL=$(terraform -chdir=infra output -raw queue_url) \
-uv run pdfsearch-worker
-
-# 3. Watcher: uploads PDFs dropped into inbox/ (git-ignored)
-mkdir -p inbox
-AWS_PROFILE=pdfsearch-watcher \
-uv run pdfsearch-watch inbox --bucket $(terraform -chdir=infra output -raw bucket_name)
-```
-
-Copy PDFs into `inbox/`; they become searchable within seconds. The watcher uploads each file once (files already in the bucket are skipped, also after a restart), ignores subfolders and hidden files, and only accepts names ending in `.pdf` or `.PDF`.
-
-Worker and watcher stop gracefully on Ctrl+C (press twice to stop immediately). See `pdfsearch.worker.main` and `pdfsearch-watch --help` for all settings.
-
-## Run on Kubernetes with autoscaling
-
-Redis, the query service and the workers run in a local [kind](https://kind.sigs.k8s.io/) cluster; [KEDA](https://keda.sh/) scales the workers between 0 and 8 based on the SQS queue length. The watcher stays on the host. Requirements: kind, kubectl, Helm, and the AWS setup and CLI profiles from the previous sections (including one for `pdfsearch-keda`).
-
-```bash
-make cluster          # create the kind cluster
-make keda             # install KEDA
-make image            # build the Docker image and load it into the cluster
-make worker-secret    # AWS keys from the pdfsearch-worker / pdfsearch-keda
-make keda-secret      #   profiles, stored as Kubernetes Secrets
-make deploy           # Redis, API, worker and the scaling rule
-```
-
-The search page is at http://localhost:8080. Start the watcher as above, then drop a large batch of generated PDFs into the inbox and watch the workers scale up, and back to zero once the queue is empty:
-
-```bash
-kubectl --context kind-pdfsearch -n pdfsearch get pods -l app=worker -w
-
-uv run pdfsearch-generate inbox --count 1000 --prefix batch-
-```
-
-`make help` lists all targets; `make restart` rebuilds the image and rolls out new pods after a code change.
-
-## Development
-
-```bash
-uv run pytest           # tests (need Redis running)
-uv run ruff check .     # lint
-uv run ruff format .    # format
-```
-
-Tests use Redis database 15 and clear it on every run; indexed data lives in database 0.
+[docs/SETUP.md](docs/SETUP.md) covers the full system: the AWS infrastructure with Terraform, the Kubernetes cluster with autoscaling, and the benchmark.
 
 ## License
 

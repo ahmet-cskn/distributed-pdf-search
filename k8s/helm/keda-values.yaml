@@ -1,0 +1,10 @@
+# KEDA, installed with `make keda`.
+
+# Expose the operator's metrics, including keda_scaler_metrics_value: the
+# queue length KEDA scales on, which scripts/autoscaling.py charts. Requires the
+# monitoring stack (`make monitoring`) for the ServiceMonitor type.
+prometheus:
+  operator:
+    enabled: true
+    serviceMonitor:
+      enabled: true

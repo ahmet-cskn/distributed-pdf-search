@@ -43,7 +43,10 @@ spec:
         - name: redis
           image: redis:8-alpine
           # Append-only file: every write is logged to /data and replayed on restart.
-          args: ["redis-server", "--appendonly", "yes"]
+          # Snapshots (on by default) are turned off: the AOF already persists
+          # everything, and during indexing a snapshot was taken every minute,
+          # each forking Redis and writing the whole index to disk again.
+          args: ["redis-server", "--appendonly", "yes", "--save", ""]
           ports:
             - name: redis
               containerPort: 6379
@@ -66,6 +69,27 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+        # Sidecar: translates Redis' INFO statistics (commands per second, CPU
+        # time, memory) into Prometheus metrics on port 9121.
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.93.0
+          env:
+            - name: REDIS_ADDR
+              value: redis://localhost:6379
+          ports:
+            - name: metrics
+              containerPort: 9121
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
   volumeClaimTemplates:
     - metadata:
         name: data

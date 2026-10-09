@@ -3,6 +3,7 @@ import threading
 import time
 
 import pytest
+from prometheus_client import REGISTRY, generate_latest
 
 from pdfsearch.search import PageMatch, search
 from pdfsearch.status import FileInfo, FileStatus, get_status, status_counts
@@ -235,3 +236,111 @@ def test_loop_survives_a_failed_receive(fast_worker, sqs, s3, redis, bucket, mak
 def test_main_requires_queue_url(monkeypatch):
     monkeypatch.delenv("QUEUE_URL", raising=False)
     assert main() == 2
+
+
+# --- Metrics ------------------------------------------------------------------
+
+
+def sample(name, **labels):
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+class MetricDeltas:
+    """Metric values relative to when the object was created.
+
+    Metrics live in a process-wide registry, so tests compare before/after.
+    """
+
+    def __init__(self):
+        self._start = {}
+
+    def __call__(self, name, **labels):
+        key = (name, tuple(sorted(labels.items())))
+        if key not in self._start:
+            raise KeyError(f"take a baseline first: {key}")
+        return sample(name, **labels) - self._start[key]
+
+    def baseline(self, name, **labels):
+        self._start[(name, tuple(sorted(labels.items())))] = sample(name, **labels)
+
+
+PHASES = ["download", "extract", "index", "delete"]
+
+
+def baseline_all():
+    deltas = MetricDeltas()
+    for outcome in ["done", "skipped", "retry", "failed", "invalid", "error"]:
+        deltas.baseline("pdfsearch_worker_jobs_total", outcome=outcome)
+    deltas.baseline("pdfsearch_worker_files_indexed_total")
+    deltas.baseline("pdfsearch_worker_pages_indexed_total")
+    for phase in [*PHASES, "receive"]:
+        deltas.baseline("pdfsearch_worker_phase_seconds_count", phase=phase)
+        deltas.baseline("pdfsearch_worker_phase_seconds_sum", phase=phase)
+    return deltas
+
+
+def test_metrics_for_an_indexed_file(worker, sqs, s3, queue_url, bucket, make_pdf):
+    s3.put_object(Bucket=bucket, Key="a.pdf", Body=make_pdf(["one", "two", "three"]))
+    delta = baseline_all()
+
+    worker.process(receive(sqs, queue_url))
+
+    assert delta("pdfsearch_worker_jobs_total", outcome="done") == 1
+    assert delta("pdfsearch_worker_files_indexed_total") == 1
+    assert delta("pdfsearch_worker_pages_indexed_total") == 3
+    for phase in PHASES:
+        assert delta("pdfsearch_worker_phase_seconds_count", phase=phase) == 1, phase
+        assert delta("pdfsearch_worker_phase_seconds_sum", phase=phase) > 0, phase
+    assert sample("pdfsearch_worker_busy") == 0  # back to idle
+
+
+@pytest.mark.parametrize(
+    ("body", "outcome"),
+    [
+        (json.dumps({"Service": "Amazon S3", "Event": "s3:TestEvent"}), "skipped"),
+        ("not json", "invalid"),
+    ],
+)
+def test_metrics_for_messages_without_pdfs(worker, sqs, queue_url, body, outcome):
+    sqs.send_message(QueueUrl=queue_url, MessageBody=body)
+    delta = baseline_all()
+
+    worker.process(receive(sqs, queue_url))
+
+    assert delta("pdfsearch_worker_jobs_total", outcome=outcome) == 1
+    assert delta("pdfsearch_worker_files_indexed_total") == 0
+
+
+def test_metrics_for_retries_and_final_failure(worker, sqs, s3, queue_url, bucket):
+    s3.put_object(Bucket=bucket, Key="broken.pdf", Body=b"not a pdf")
+    delta = baseline_all()
+
+    for _ in range(3):
+        message = receive(sqs, queue_url)
+        worker.process(message)
+        make_visible(sqs, queue_url, message)
+
+    assert delta("pdfsearch_worker_jobs_total", outcome="retry") == 2
+    assert delta("pdfsearch_worker_jobs_total", outcome="failed") == 1
+    assert delta("pdfsearch_worker_files_indexed_total") == 0
+
+
+def test_receive_is_timed_only_when_it_returns_a_job(fast_worker, sqs, s3, redis, bucket, make_pdf):
+    delta = baseline_all()
+    s3.put_object(Bucket=bucket, Key="a.pdf", Body=make_pdf(["text"]))
+
+    run_until(fast_worker, lambda: status_counts(redis)[FileStatus.DONE] == 1)
+
+    assert delta("pdfsearch_worker_phase_seconds_count", phase="receive") == 1
+
+
+def test_metrics_are_exported():
+    exported = generate_latest(REGISTRY).decode()
+    for name in [
+        "pdfsearch_worker_jobs_total",
+        "pdfsearch_worker_files_indexed_total",
+        "pdfsearch_worker_pages_indexed_total",
+        "pdfsearch_worker_phase_seconds_bucket",
+        "pdfsearch_worker_busy",
+    ]:
+        assert name in exported, name
