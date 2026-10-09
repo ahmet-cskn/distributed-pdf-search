@@ -25,28 +25,24 @@ https://github.com/user-attachments/assets/4b236731-b8cf-4f6f-9e46-71596f9dd3a4
 ```mermaid
 flowchart LR
     subgraph host["Your machine"]
-        folder["PDF folder"] --> watcher["Watcher"]
+        direction TB
+        folder["PDF folder"] -- "new PDFs" --> watcher["Watcher"]
+        watcher ~~~ browser["Browser"]
     end
     subgraph aws["AWS"]
-        s3[("S3 bucket")]
-        sqs[["SQS job queue"]]
-        dlq[["Dead-letter queue"]]
+        direction TB
+        s3[("S3 bucket")] -- "new-file event" --> sqs[["SQS job queue"]]
+        sqs -- "after 3 failed<br/>attempts" --> dlq[["Dead-letter queue"]]
     end
     subgraph k8s["Kubernetes"]
-        keda["KEDA autoscaler"]
-        workers["Workers (0–8)"]
-        redis[("Redis index")]
-        api["Search API + page"]
+        direction TB
+        keda["KEDA autoscaler"] -. "scales by<br/>queue length" .-> workers["Workers (0–8)"]
+        workers -- "write pages" --> redis[("Redis index")]
+        redis -- "read" --> api["Search API + page"]
     end
-    watcher -- "upload" --> s3
-    s3 -- "new-file event" --> sqs
-    sqs -- "one job per PDF" --> workers
-    sqs -- "after 3 failed attempts" --> dlq
-    s3 -- "download" --> workers
-    keda -.->|"watches queue length,<br/>scales workers"| workers
-    workers -- "write pages" --> redis
-    redis --> api
-    browser["Browser"] --> api
+    host -- "upload PDFs" --> aws
+    aws -- "jobs + PDFs" --> k8s
+    host -. "search" .-> k8s
 ```
 
 1. The watcher notices new PDFs in the folder and uploads them to S3.
